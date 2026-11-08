@@ -104,7 +104,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .fc b{font-size:13px;font-weight:600}
 .fc .wet{color:#6fa8ff}
 /* Rain watch */
-.rainPill{background:#13294a;border:1px solid #2b5aa3;color:#9cc4ff;border-radius:6px;padding:5px 10px;font:inherit;font-weight:700;font-size:12px;letter-spacing:.05em;cursor:pointer}
+.rainPill{white-space:nowrap;flex-shrink:0;max-width:46vw;overflow:hidden;text-overflow:ellipsis;background:#13294a;border:1px solid #2b5aa3;color:#9cc4ff;border-radius:6px;padding:5px 10px;font:inherit;font-weight:700;font-size:12px;letter-spacing:.05em;cursor:pointer}
 .rainPill.now{background:#1d4ed8;border-color:#60a5fa;color:#fff;animation:rainPulse 2s infinite}
 @keyframes rainPulse{50%{box-shadow:0 0 0 6px rgba(96,165,250,0)}0%{box-shadow:0 0 0 0 rgba(96,165,250,.6)}}
 .rainBox{padding:12px 14px;border-bottom:1px solid var(--line)}
@@ -127,6 +127,15 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .rmark .ring{fill:none;stroke:#fff;stroke-opacity:.55;stroke-width:1.2;stroke-dasharray:4 4}
 .rmark .ring2{fill:none;stroke:#fff;stroke-opacity:.25;stroke-width:1;stroke-dasharray:3 5}
 .rmark .dot{fill:#ff3b3b;stroke:#fff;stroke-width:2}
+.swRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.swLbl{font-size:10px;letter-spacing:.08em;font-weight:700;color:var(--dim);text-transform:uppercase;margin-right:2px}
+.sw{font-family:"JetBrains Mono",monospace;font-size:11px;padding:3px 7px;border-radius:5px;background:#1b2a1f;color:var(--green);border:1px solid #24432d}
+.sw em{font-style:normal;font-family:Inter,sans-serif;opacity:.8;margin-left:3px}
+.sw.learning{background:#1d2028;color:var(--dim);border-color:var(--line)}
+.sw.slowing{background:#13294a;color:#9cc4ff;border-color:#2b5aa3}
+.sw.wet{background:#1d4ed8;color:#fff;border-color:#60a5fa}
+.sw.faster{background:#1b2a1f;color:var(--green);border-color:#2f6b3f}
+.swNote{font-size:11px;color:var(--dim);margin-top:5px}
 .radarNote{padding:8px 14px 12px;color:var(--dim);font-size:11px;line-height:1.5}
 
 /* Race engineer panel */
@@ -723,6 +732,8 @@ function drawCircuit(c){
   const d = 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+' Z';
   mk('path',{d,fill:'none',stroke:'#1d2029','stroke-width':unit*14,'stroke-linejoin':'round'});
   trackPath = mk('path',{d,fill:'none',stroke:'#3a3f4c','stroke-width':unit*5,'stroke-linejoin':'round'});
+  // Highlights sectors the rain watch thinks are wet (rain.js).
+  window.wetPath = mk('path',{d,fill:'none',stroke:'transparent','stroke-width':unit*6,'stroke-linejoin':'round','stroke-linecap':'butt'});
   trackLen = trackPath.getTotalLength();
   // start/finish
   const p0=trackPath.getPointAtLength(0), p1=trackPath.getPointAtLength(unit*3);
