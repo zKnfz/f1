@@ -96,6 +96,13 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .wx div{background:var(--panel);padding:10px 12px}
 .wx small{display:block;color:var(--dim);font-size:10px;letter-spacing:.08em;font-weight:700;margin-bottom:3px}
 .wx b{font-size:16px}
+.fc{display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--line)}
+.fc div{display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 2px;font-size:11px;border-right:1px solid #1b1e26}
+.fc div:last-child{border-right:0}
+.fc small{color:var(--dim);font-weight:700}
+.fc .ic{font-size:17px;line-height:1.2}
+.fc b{font-size:13px;font-weight:600}
+.fc .wet{color:#6fa8ff}
 
 /* Race engineer panel */
 .left{display:flex;flex-direction:column;gap:16px;min-width:0}
@@ -142,7 +149,62 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .seg{height:100%;color:#0b0c10;font-size:10px;font-weight:800;display:flex;align-items:center;padding-left:5px;white-space:nowrap;overflow:hidden}
 .now{position:absolute;top:0;bottom:0;width:2px;background:#fff;opacity:.7}
 footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
-@media (max-width:640px){main{padding:12px 16px}.lap{font-size:18px}}
+
+/* ---------- Phone layout ---------- */
+.sheetBg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;display:none}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--panel);border-top:1px solid #343a48;border-radius:16px 16px 0 0;
+  max-height:78vh;overflow-y:auto;padding:8px 16px 24px;transform:translateY(105%);transition:transform .25s ease;box-shadow:0 -10px 40px rgba(0,0,0,.5)}
+.sheet.open{transform:none}
+.sheetBg.open{display:block}
+.grab{width:40px;height:4px;border-radius:2px;background:#3a3f4c;margin:4px auto 10px}
+.shHead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.shHead .bar{height:34px}
+.shHead b{font-size:20px;letter-spacing:.04em}
+.shSub{color:var(--muted);font-size:12px;margin-top:2px}
+.shHead .x{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;width:34px;height:34px;font-size:16px;cursor:pointer}
+.shGrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:12px}
+.shGrid div{background:var(--panel2);padding:9px 11px}
+.shGrid small{display:block;color:var(--dim);font-size:10px;letter-spacing:.08em;font-weight:700;margin-bottom:3px}
+.shGrid b{font-size:15px;font-weight:600}
+.shSecs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.shSecs small{display:block;color:var(--dim);font-size:10px;letter-spacing:.08em;font-weight:700;margin-bottom:4px}
+.shBtn{display:block;width:100%;background:#232733;border:1px solid #343a48;color:var(--text);border-radius:8px;padding:11px;font:inherit;font-weight:600;cursor:pointer}
+
+@media (max-width:640px){
+  :root{--rowH:40px}
+  header{gap:8px 14px;padding:10px 12px}
+  .brand .mark{width:24px;height:24px;font-size:12px}
+  .brand>div:last-child{min-width:0}
+  .brand small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw}
+  .lap{font-size:17px}
+  .chip{font-size:11px;padding:4px 8px}
+  .clock{font-size:14px} .delay{font-size:13px}
+  .spacer{display:none}
+  main{padding:10px;gap:10px}
+  .left,.side{gap:10px}
+  .card h3 #sub{display:none}
+  /* Timing table: position, driver, tyre, gap, interval, last lap. Tap a row for the rest. */
+  .table{min-width:0}
+  .cols{grid-template-columns:24px minmax(0,1fr) 26px 58px 58px 64px;gap:0 5px;padding:0 8px}
+  .cols>:nth-child(3),.cols>:nth-child(n+8){display:none}
+  .thead{font-size:9px}
+  .pos{font-size:14px}
+  .num,.team{display:none}
+  .drv{gap:6px}
+  .code{font-size:13px}
+  .tag{font-size:9px;padding:1px 4px}
+  .tyre small{display:none}
+  .tc{width:22px;height:22px;font-size:10px;border-width:2.5px}
+  .big{font-size:12px}
+  .row:hover{background:var(--panel)}
+  /* Engineer panel */
+  #engBody{padding:10px;overflow-x:auto}
+  .engHead{padding:8px 10px}
+  .etab{padding:6px 9px}
+  .egrid{grid-template-columns:minmax(0,1fr)}
+  .et{font-size:11px}
+  .et td,.et th{padding:5px 4px}
+}
 </style>
 </head>
 <body>
@@ -195,11 +257,14 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
       <div id="rc"></div>
     </section>
     <section class="card">
-      <h3><span>WEATHER</span></h3>
+      <h3><span>WEATHER AT THE TRACK</span><span id="fcPlace"></span></h3>
       <div class="wx" id="wx"></div>
+      <div class="fc" id="fc"></div>
     </section>
   </aside>
 </main>
+<div class="sheetBg" id="sheetBg"></div>
+<div class="sheet" id="sheet" role="dialog" aria-label="Driver details"></div>
 <footer>
   Data: Formula 1 live timing feed (<span id="modeTxt">connecting</span>). Car dots on the map are estimated from sector progress, since live GPS positions need an F1 TV login.
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
@@ -332,7 +397,7 @@ function buildRows(nums){
       <div class="t mono big last"></div><div class="t mono big best"></div>
       ${[0,1,2].map(()=>`<div class="sec"><div class="minis"></div><div class="mono"></div></div>`).join('')}
       <div class="t mono spd"></div>`;
-    el.onclick = ()=>{ selected = selected===n?null:n; schedule(); };
+    el.onclick = ()=>pickDriver(n);
     tb.appendChild(el);
     const q = s=>el.querySelector(s);
     rows[n] = {el,pos:q('.pos'),bar:q('.bar'),num:q('.num'),code:q('.code'),team:q('.team'),tag:q('.tag'),chg:q('.chg'),
@@ -455,7 +520,52 @@ function render(){
     set(r,'spdc',r.spd,'t mono '+(spd?.OverallFastest?'c-purple':spd?.PersonalFastest?'c-green':''),'className');
   });
 
-  renderRC(); renderWeather();
+  renderRC(); renderWeather(); renderSheet();
+}
+
+// ---------- Phone details card ----------
+const phone = matchMedia('(max-width:640px)');
+let sheetFor = null;
+function pickDriver(n){
+  if(phone.matches){ selected = n; openSheet(n); }
+  else selected = selected===n ? null : n;
+  schedule();
+}
+function openSheet(n){ sheetFor = n; $('sheet').classList.add('open'); $('sheetBg').classList.add('open'); renderSheet(); }
+function closeSheet(){ sheetFor = null; $('sheet').classList.remove('open'); $('sheetBg').classList.remove('open'); }
+$('sheetBg').onclick = closeSheet;
+phone.addEventListener('change', ()=>{ if(!phone.matches) closeSheet(); });
+let sheetHtml = '';
+function renderSheet(){
+  if(sheetFor==null) return;
+  const n = sheetFor, r = rows[n];
+  const d = state.DriverList?.[n] || {}, L = state.TimingData?.Lines?.[n] || {}, A = state.TimingAppData?.Lines?.[n] || {};
+  if(!r) return;
+  const stint = arr(A.Stints).at(-1);
+  const ty = TYRES[stint?.Compound] || ['–','#666'];
+  const kind = sessionKind();
+  const cell = (k, el) => `<div><small>${k}</small><b class="mono ${el.className.replace(/\b(t|big|mono|gap|int|last|best|spd)\b/g,'')}">${esc(el.textContent)}</b></div>`;
+  const html = `<div class="grab"></div>
+    <div class="shHead"><div class="bar" style="background:#${esc(d.TeamColour||'666')}"></div>
+      <div><b>${esc(d.Tla||n)}</b> <span class="mono dimt">#${esc(d.RacingNumber||n)}</span><div class="shSub">${esc(d.FullName||'')} · ${esc(d.TeamName||'')}</div></div>
+      <button class="x" id="shClose" aria-label="Close">✕</button></div>
+    <div class="shGrid">
+      <div><small>POSITION</small><b class="mono">P${esc(L.Position||'–')}${r.tag.textContent?' · '+esc(r.tag.textContent):''}</b></div>
+      ${kind==='race'?`<div><small>VS GRID</small><b class="mono ${r.chg.className.replace(/\b(chg|mono)\b/g,'')}">${esc(r.chg.textContent||'–')}</b></div>`:`<div><small>LAPS</small><b class="mono">${esc(L.NumberOfLaps??'–')}</b></div>`}
+      ${cell('GAP', r.gap)}${cell('INTERVAL', r.int)}
+      ${cell('LAST LAP', r.last)}${cell('BEST LAP', r.best)}
+      <div><small>TYRE</small><b class="mono" style="color:${ty[1]}">${esc(stint?.Compound||'–')}</b> <span class="mono dimt">${stint?`${stint.TotalLaps??0} laps${stint.New==='false'?' · used':''}`:''}</span></div>
+      <div><small>PIT STOPS</small><b class="mono">${esc(L.NumberOfPitStops??0)}</b></div>
+      ${cell('TOP SPEED (KM/H)', r.spd)}
+      <div><small>STATUS</small><b>${L.Retired?'Retired':L.KnockedOut?'Knocked out':L.InPit?'In pit':L.PitOut?'Pit out':'On track'}</b></div>
+    </div>
+    <div class="shSecs">${r.secs.map((sc,i)=>`<div><small>SECTOR ${i+1}</small><div class="minis">${sc.minis.innerHTML}</div><b class="${sc.txt.className}">${esc(sc.txt.textContent)}</b></div>`).join('')}</div>
+    <button class="shBtn" id="shEng">Race engineer view</button>`;
+  if(html===sheetHtml) return;
+  sheetHtml = html;
+  $('sheet').innerHTML = html;
+  $('shClose').onclick = closeSheet;
+  $('shEng').onclick = ()=>{ closeSheet(); engTab[sessionKind()]='driver'; engDirty=true; document.getElementById('eng').scrollIntoView({behavior:'smooth'}); };
 }
 
 // ---------- Race control ----------
@@ -491,6 +601,40 @@ function renderWeather(){
   if($('wx').innerHTML!==html) $('wx').innerHTML = html;
 }
 
+// ---------- Forecast (Open-Meteo, free, no key) ----------
+// F1's feed gives the conditions right now; this adds the next 6 hours near the circuit.
+let forecast = null, forecastFor = null, forecastPlace = null;
+const WX_ICON = c => c===0?'☀️':c<=2?'🌤️':c===3?'☁️':c<=48?'🌫️':c<=57?'🌦️':c<=67?'🌧️':c<=77?'❄️':c<=82?'🌦️':'⛈️';
+async function loadForecast(force){
+  const m = state.SessionInfo?.Meeting;
+  if(!m?.Location) return;
+  if(!force && forecastFor===m.Key) return;
+  forecastFor = m.Key;
+  try{
+    if(forecastPlace?.key!==m.Key){
+      const q = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(m.Location)}&count=10`)).json();
+      const res = q.results || [];
+      const hit = res.find(r=>r.country===m.Country?.Name) || res[0];
+      if(!hit) throw new Error('place not found');
+      forecastPlace = {key:m.Key, lat:hit.latitude, lon:hit.longitude, name:hit.name};
+    }
+    const p = forecastPlace;
+    const f = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&forecast_hours=6&timezone=auto`)).json();
+    forecast = f.hourly?.time ? f.hourly : null;
+  }catch{ forecast = null; }
+  renderForecast();
+}
+setInterval(()=>loadForecast(true), 15*60*1000);
+function renderForecast(){
+  const h = forecast;
+  $('fcPlace').textContent = h && forecastPlace ? `forecast near ${forecastPlace.name}` : '';
+  $('fc').innerHTML = !h ? '' : h.time.map((t,i)=>{
+    const rain = h.precipitation_probability?.[i] ?? 0, mm = h.precipitation?.[i] ?? 0;
+    return `<div title="${esc(t.replace('T',' '))} local time"><small>${esc(t.slice(11,16))}</small><span class="ic">${WX_ICON(h.weather_code?.[i])}</span>
+      <b class="mono">${Math.round(h.temperature_2m?.[i])}°</b><span class="mono ${rain>=30?'wet':'dimt'}" title="chance of rain">${rain}%</span><span class="mono dimt">${mm>0?`${mm} mm`:'&nbsp;'}</span></div>`;
+  }).join('');
+}
+
 function renderClock(){
   const c = state.ExtrapolatedClock;
   if(!c){ $('clock').innerHTML=''; return; }
@@ -510,6 +654,7 @@ async function loadCircuit(){
   const key = info?.Meeting?.Circuit?.Key, year = (info?.StartDate||'').slice(0,4);
   if(!key || !year || circuitId===`${key}/${year}`) return;
   circuitId = `${key}/${year}`;
+  loadForecast();
   $('circuitName').textContent = info.Meeting.Circuit.ShortName||'';
   try{
     const r = await fetch(DIRECT ? `https://api.multiviewer.app/api/v1/circuits/${key}/${year}` : `api/circuit?key=${key}&year=${year}`);
@@ -566,7 +711,7 @@ function renderMap(){
       const g=document.createElementNS(NS,'g');
       const c=document.createElementNS(NS,'circle'); c.setAttribute('r',unit*6); c.setAttribute('fill','#'+(d.TeamColour||'888')); c.setAttribute('stroke','#0b0c10'); c.setAttribute('stroke-width',unit*1.5);
       const t=document.createElementNS(NS,'text'); t.setAttribute('x',unit*9); t.setAttribute('y',unit*3.5); t.setAttribute('fill','#e8eaf0'); t.setAttribute('font-size',unit*9); t.setAttribute('font-weight',700); t.setAttribute('font-family','JetBrains Mono'); t.textContent=d.Tla||n;
-      g.append(c,t); g.style.cursor='pointer'; g.onclick=()=>{ selected = selected===n?null:n; schedule(); };
+      g.append(c,t); g.style.cursor='pointer'; g.onclick=()=>pickDriver(n);
       dotLayer.appendChild(g); dot = dots[n] = {g,c,t};
     }
     const segs = arr(L.Sectors).flatMap(s=>arr(s.Segments).map(x=>x?.Status||0));
