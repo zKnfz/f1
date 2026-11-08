@@ -587,7 +587,7 @@ function renderRC(){
   $('rcCount').textContent = msgs.length ? `${msgs.length} messages` : '';
   $('rc').innerHTML = msgs.slice().reverse().slice(0,80).map((m,i)=>{
     const t = m.Utc ? new Date(m.Utc.endsWith('Z')?m.Utc:m.Utc+'Z') : null;
-    const time = t ? t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '';
+    const time = t ? t.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true}) : '';
     return `<div class="msg ${rcClass(m)}${i<fresh?' new':''}"><div class="when mono">${m.Lap?'L'+m.Lap+'<br>':''}${time}</div><div class="txt">${esc(m.Message)}</div></div>`;
   }).join('') || '<div class="mapEmpty">No messages yet</div>';
 }
@@ -619,18 +619,24 @@ async function loadForecast(force){
       forecastPlace = {key:m.Key, lat:hit.latitude, lon:hit.longitude, name:hit.name};
     }
     const p = forecastPlace;
-    const f = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&forecast_hours=6&timezone=auto`)).json();
+    const f = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&forecast_hours=6&timeformat=unixtime`)).json();
     forecast = f.hourly?.time ? f.hourly : null;
+    forecastAt = Date.now();
   }catch{ forecast = null; }
   renderForecast();
 }
-setInterval(()=>loadForecast(true), 15*60*1000);
+// Refresh every 5 minutes, and straight away when you come back to the tab.
+setInterval(()=>loadForecast(true), 5*60*1000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && Date.now()-forecastAt > 60*1000) loadForecast(true); });
+let forecastAt = 0;
+// Forecast hours are shown in your own time zone, like every other time on the page.
+const hour12 = t => new Date(t*1000).toLocaleTimeString([], {hour:'numeric', hour12:true});
 function renderForecast(){
   const h = forecast;
-  $('fcPlace').textContent = h && forecastPlace ? `forecast near ${forecastPlace.name}` : '';
+  $('fcPlace').textContent = h && forecastPlace ? `forecast near ${forecastPlace.name} · updated ${new Date(forecastAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit',hour12:true})}` : '';
   $('fc').innerHTML = !h ? '' : h.time.map((t,i)=>{
     const rain = h.precipitation_probability?.[i] ?? 0, mm = h.precipitation?.[i] ?? 0;
-    return `<div title="${esc(t.replace('T',' '))} local time"><small>${esc(t.slice(11,16))}</small><span class="ic">${WX_ICON(h.weather_code?.[i])}</span>
+    return `<div title="${esc(new Date(t*1000).toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit',hour12:true}))} (your time)"><small>${esc(hour12(t))}</small><span class="ic">${WX_ICON(h.weather_code?.[i])}</span>
       <b class="mono">${Math.round(h.temperature_2m?.[i])}°</b><span class="mono ${rain>=30?'wet':'dimt'}" title="chance of rain">${rain}%</span><span class="mono dimt">${mm>0?`${mm} mm`:'&nbsp;'}</span></div>`;
   }).join('');
 }
