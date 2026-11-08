@@ -66,6 +66,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .tag.PIT{background:var(--blue);color:#fff}
 .tag.OUTLAP{background:#24324d;color:#9cc0ff}
 .tag.OUT,.tag.STOP{background:#4a1a1a;color:#ff8a8a}
+.tag.FIN{background:none;padding:0 2px;font-size:14px;line-height:1}
 .tag.KO{background:#2a2d36;color:var(--muted)}
 .chg{font-size:11px;font-weight:700}
 .chg.up{color:var(--green)} .chg.dn{color:var(--red)} .chg.eq{color:var(--dim)}
@@ -313,7 +314,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=9"></script>
+<script src="direct.js?v=10"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -486,6 +487,8 @@ function render(){
     if(kind==='quali') return arr(L.BestLapTimes)[(td.SessionPart||1)-1]?.Value || '';
     return L.BestLapTime?.Value || '';
   };
+  // F1 sets bit 1024 on a car's status once it crosses the line after the chequered flag.
+  const chequered = arr(state.RaceControlMessages?.Messages).some(m=>m.Flag==='CHEQUERED');
   let fastestBest = Infinity;
   for(const n of order){ const s = lapSecs(bestOf(n)); if(s && s<fastestBest) fastestBest = s; }
 
@@ -503,8 +506,9 @@ function render(){
     set(r,'team',r.team,d.TeamName||'');
     set(r,'pos',r.pos, L.Position || String(idx+1));
 
-    const tag = L.Retired?'OUT':L.Stopped?'STOP':L.KnockedOut?'KO':L.InPit?'PIT':L.PitOut?'OUTLAP':'';
-    if(r.cache.tag!==tag){ r.cache.tag=tag; r.tag.className='tag '+tag; r.tag.textContent=tag==='OUTLAP'?'PIT OUT':tag; r.tag.style.display=tag?'':'none'; }
+    const fin = chequered && (Number(L.Status) & 1024);
+    const tag = L.Retired?'OUT':fin?'FIN':L.Stopped?'STOP':L.KnockedOut?'KO':L.InPit?'PIT':L.PitOut?'OUTLAP':'';
+    if(r.cache.tag!==tag){ r.cache.tag=tag; r.tag.className='tag '+tag; r.tag.textContent=tag==='OUTLAP'?'PIT OUT':tag==='FIN'?'🏁':tag; r.tag.style.display=tag?'':'none'; }
 
     if(kind==='race' && A.GridPos && L.Position){
       const ch = (+A.GridPos) - (+L.Position);
@@ -799,7 +803,7 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=9"></script>
-<script src="rain.js?v=9"></script>
+<script src="engineer.js?v=10"></script>
+<script src="rain.js?v=10"></script>
 </body>
 </html>
