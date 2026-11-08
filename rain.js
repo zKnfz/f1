@@ -75,6 +75,30 @@ es.addEventListener('feed', e => {
   }
 });
 
+// Fill in sector times from laps this browser already recorded, so the watch
+// has a baseline as soon as the page opens instead of waiting several minutes.
+function seedFromHistory() {
+  for (const [n, laps] of Object.entries(hist?.laps || {})) {
+    const arrs = (secSamples[n] ??= [[], [], []]);
+    for (let i = 0; i < 3; i++) {
+      const firstLive = arrs[i][0]?.at ?? Infinity;
+      const older = [];
+      for (const r of laps.slice(-15)) {
+        const s = r.s || [];
+        if (!r.at || !(s[i] > 0)) continue;
+        // r.at is when the lap ended; step back through the later sectors to time this one.
+        let at = r.at;
+        for (let j = 2; j > i; j--) at -= (s[j] || 0) * 1000;
+        if (at >= firstLive - 1000) continue; // already have it from the live feed
+        older.push({ t: s[i], at, pit: !!r.pit, flag: (r.ts || '1') !== '1' });
+      }
+      arrs[i] = older.concat(arrs[i]).slice(-15);
+    }
+  }
+}
+es.addEventListener('history', () => setTimeout(() => { seedFromHistory(); renderRain(); }, 0));
+if (typeof hist !== 'undefined' && hist?.key) seedFromHistory();
+
 function sectorWatch() {
   const race = sessionKind() === 'race';
   const now = Date.now();
@@ -90,8 +114,11 @@ function sectorWatch() {
       const best = Math.min(...list.map(s => s.t));
       let base = list.filter(s => now - s.at > WATCH_WINDOW && !s.flag);
       if (!race) base = base.filter(s => s.t <= best * 1.03);
-      base = base.slice(-6);
+      base = base.slice(-10);
       if (base.length < 3) { learning++; continue; }
+      // Use the quicker half of recent laps, so a slow build-up of rain does not
+      // drag the "normal" time down with it.
+      base = base.slice().sort((a, b) => a.t - b.t).slice(0, Math.max(3, Math.ceil(base.length / 2)));
       const cur = list.filter(s => now - s.at <= WATCH_WINDOW).at(-1);
       if (!cur || cur.flag) continue;
       if (!race && cur.t > best * 1.15) continue; // a cool-down lap, not a push
@@ -130,7 +157,7 @@ function sectorWatchHtml(w) {
   const label = { wet: 'likely wet', slowing: 'slowing', faster: 'getting faster', normal: 'normal', learning: 'learning' };
   const chips = w.sectors.map(x => `<span class="sw ${w.paused ? 'learning' : x.status}" title="${x.cars} cars compared with their own recent times">S${x.i + 1} ${x.med == null || x.status === 'learning' ? '·' : (x.med >= 0 ? '+' : '−') + Math.abs(x.med).toFixed(1) + 's'} <em>${w.paused && x.status !== 'learning' ? 'paused' : label[x.status]}</em></span>`).join('');
   const learningNote = w.sectors.every(x => x.status === 'learning')
-    ? '<div class="swNote">Learning each driver\'s normal sector times. This takes about 3 laps after the page opens.</div>'
+    ? '<div class="swNote">Learning each driver\'s normal sector times. This takes about 3 laps, or less if this browser had the page open earlier in the session.</div>'
     : w.paused ? '<div class="swNote">Paused while flags are out, since everyone slows down.</div>' : '';
   return `<div class="swRow"><span class="swLbl">Sector watch</span>${chips}</div>${learningNote}`;
 }
