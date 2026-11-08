@@ -170,11 +170,13 @@ function renderRain() {
   const w = sectorWatch();
   paintWetSectors(w);
   const wetSecs = w.paused ? [] : w.flagged;
-  const secNames = wetSecs.map(x => 'S' + (x.i + 1)).join(' + ');
+  const nums = wetSecs.map(x => x.i + 1);
+  const secWords = nums.length === 1 ? `Sector ${nums[0]}` : `Sectors ${nums.slice(0, -1).join(', ')} and ${nums.at(-1)}`;
+  const secShort = nums.length === 1 ? `SECTOR ${nums[0]}` : `SECTORS ${nums.join(' & ')}`;
   let pill = '', cls = '';
-  if (r.raining) { pill = '🌧 RAINING AT TRACK'; cls = 'now'; }
-  else if (w.whole && !w.paused) { pill = '🌧 WHOLE TRACK SLOWING · WET?'; cls = 'now'; }
-  else if (wetSecs.length) { pill = `🌧 ${secNames} SLOWING · WET?`; cls = wetSecs.some(x => x.status === 'wet') ? 'now' : 'soon'; }
+  if (r.raining) { pill = '🌧 RAINING AT TRACK'; cls = 'rnow'; }
+  else if (w.whole && !w.paused) { pill = '🌧 WHOLE TRACK WET?'; cls = 'rnow'; }
+  else if (wetSecs.length) { pill = `🌧 ${secShort} WET?`; cls = wetSecs.some(x => x.status === 'wet') ? 'rnow' : 'soon'; }
   else if (r.soon != null && r.soon <= 5) { pill = '🌧 RAIN FORECAST NOW'; cls = 'soon'; }
   else if (r.soon != null) { pill = `🌧 RAIN IN ~${r.soon} MIN`; cls = 'soon'; }
   const pHtml = pill ? `<button class="rainPill ${cls}" id="rainPillBtn" title="Open the rain watch">${pill}</button>` : '';
@@ -186,11 +188,13 @@ function renderRain() {
   }
 
   let head, headCls;
-  if (r.raining) { head = 'Raining at the track now'; headCls = 'now'; }
+  if (r.raining) { head = 'Raining at the track now'; headCls = 'rnow'; }
   else if (wetSecs.length) {
     const worst = wetSecs.reduce((a, b) => (b.med > a.med ? b : a));
-    head = w.whole ? `Whole track slowing (+${worst.med.toFixed(1)}s) · rain likely` : `${secNames} slowing across the field (+${worst.med.toFixed(1)}s) · probably wet there`;
-    headCls = 'now';
+    const sure = wetSecs.some(x => x.status === 'wet');
+    head = `${w.whole ? 'Whole track' : secWords} ${sure ? 'looks wet' : 'may be getting wet'}`
+      + `<div class="rainSub">Most cars are about ${worst.med.toFixed(1)}s slower ${w.whole ? 'all around the lap' : 'there'} than their normal pace.</div>`;
+    headCls = 'rnow';
   }
   else if (r.soon != null && r.soon <= 5) { head = `Rain forecast now · ${intensity(r.soonMm)}`; headCls = 'soon'; }
   else if (r.soon != null) { head = `Rain likely in ~${r.soon} min · ${intensity(r.soonMm)}`; headCls = 'soon'; }
