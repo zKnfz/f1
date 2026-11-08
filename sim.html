@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pitwall Live Timing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0c10; --panel:#13151b; --panel2:#181b22; --line:#242832; --text:#e8eaf0; --muted:#8a91a1; --dim:#5b6170;
+  --purple:#b14cff; --green:#1ed760; --yellow:#f5c518; --red:#ff3b3b; --blue:#3b8bff; --amber:#ffae1a;
+  --rowH:42px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;font-size:13px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+button,select{font:inherit;color:inherit}
+
+/* Header */
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:12px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#14161d,#0f1116)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.04em}
+.brand .mark{width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,var(--red),#ff7a3b);display:grid;place-items:center;font-size:14px}
+.brand small{display:block;font-weight:500;color:var(--muted);letter-spacing:0;font-size:12px}
+.lap{font-weight:800;font-size:22px}
+.lap span{color:var(--muted);font-weight:600;font-size:14px}
+.chip{padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;letter-spacing:.06em;background:#1d3b25;color:var(--green);border:1px solid #2a5a36}
+.chip.YELLOW,.chip.VSC,.chip.SC{background:#3d3210;color:var(--yellow);border-color:#6b5716}
+.chip.RED{background:#401414;color:var(--red);border-color:#6b2020}
+.chip.FIN{background:#e8eaf0;color:#0b0c10;border-color:#fff}
+.chip.PRE{background:#222631;color:var(--muted);border-color:var(--line)}
+.clock{color:var(--muted)}
+.lights{display:flex;gap:6px}
+.lights i{width:16px;height:16px;border-radius:50%;background:#2a2d36;border:2px solid #1a1c22}
+.lights i.on{background:var(--red);box-shadow:0 0 10px var(--red)}
+.spacer{flex:1}
+.controls{display:flex;gap:6px;align-items:center}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+.btn:hover{border-color:#3a4050}
+.btn.active{background:#2a2f3b;border-color:#4a5263}
+.fl{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.fl b{color:var(--purple)}
+
+/* Layout */
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16px}
+@media (max-width:1150px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.card h3{margin:0;padding:10px 14px;font-size:11px;letter-spacing:.1em;color:var(--muted);border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between}
+
+/* Timing table */
+.tableWrap{overflow-x:auto}
+.table{min-width:1180px;position:relative}
+.cols{display:grid;grid-template-columns:44px 190px 46px 40px 82px 84px 84px 94px 94px 1fr 1fr 1fr;align-items:center;gap:0 8px;padding:0 12px}
+.thead{height:34px;color:var(--dim);font-size:10px;letter-spacing:.1em;font-weight:700;border-bottom:1px solid var(--line)}
+.tbody{position:relative}
+.row{position:absolute;left:0;right:0;height:var(--rowH);border-bottom:1px solid #1b1e26;transition:transform .6s cubic-bezier(.3,.8,.3,1);cursor:pointer;background:var(--panel)}
+.row:hover{background:#171a21}
+.row.sel{background:#1c2130}
+.row.dnf{opacity:.45}
+.pos{font-weight:800;font-size:15px;text-align:center}
+.drv{display:flex;align-items:center;gap:8px;min-width:0}
+.bar{width:4px;height:26px;border-radius:2px}
+.num{color:var(--muted);width:20px;text-align:right;font-size:12px}
+.code{font-weight:800;letter-spacing:.04em;font-size:14px}
+.team{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{font-size:10px;font-weight:800;padding:2px 5px;border-radius:4px;letter-spacing:.05em}
+.tag.PIT{background:var(--blue);color:#fff}
+.tag.OUT{background:#24324d;color:#9cc0ff}
+.tag.DNF{background:#4a1a1a;color:#ff8a8a}
+.tag.FIN{background:#e8eaf0;color:#000}
+.chg{font-size:11px;font-weight:700}
+.chg.up{color:var(--green)} .chg.dn{color:var(--red)} .chg.eq{color:var(--dim)}
+.drs{font-size:10px;font-weight:800;padding:2px 4px;border-radius:3px;border:1px solid #333845;color:#3a3f4c;text-align:center}
+.drs.on{background:var(--green);color:#03140a;border-color:var(--green)}
+.tyre{display:flex;align-items:center;gap:7px}
+.tc{width:24px;height:24px;border-radius:50%;border:3px solid;display:grid;place-items:center;font-weight:800;font-size:11px;background:#0d0f13}
+.tyre small{color:var(--muted);font-size:10px;line-height:1.25}
+.t{text-align:right}
+.big{font-size:13px}
+.dimt{color:var(--dim)}
+.c-purple{color:var(--purple)} .c-green{color:var(--green)} .c-yellow{color:var(--yellow)}
+.sec{display:flex;flex-direction:column;gap:3px}
+.minis{display:flex;gap:2px}
+.minis i{flex:1;height:4px;border-radius:1px;background:#2a2e38}
+.minis i.p{background:var(--purple)} .minis i.g{background:var(--green)} .minis i.y{background:var(--yellow)} .minis i.b{background:var(--blue)}
+.sec .mono{font-size:12px}
+
+/* Side */
+.side{display:flex;flex-direction:column;gap:16px;min-width:0}
+#map{display:block;width:100%;height:auto;padding:8px}
+#rc{max-height:300px;overflow-y:auto}
+.msg{padding:9px 14px;border-bottom:1px solid #1b1e26;display:grid;grid-template-columns:62px 1fr;gap:8px;animation:fade .5s}
+.msg .when{color:var(--dim);font-size:11px}
+.msg .txt{font-weight:600;font-size:12px}
+.msg.flag-yellow .txt{color:var(--yellow)} .msg.flag-green .txt{color:var(--green)} .msg.flag-purple .txt{color:var(--purple)} .msg.flag-red .txt{color:var(--red)} .msg.flag-blue .txt{color:#8fb6ff}
+@keyframes fade{from{background:#262b38}to{background:transparent}}
+.wx{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line)}
+.wx div{background:var(--panel);padding:10px 12px}
+.wx small{display:block;color:var(--dim);font-size:10px;letter-spacing:.08em;font-weight:700;margin-bottom:3px}
+.wx b{font-size:16px}
+footer{color:var(--dim);padding:0 16px 20px;font-size:11px}
+@media (max-width:640px){header{padding:12px 16px}main{padding:12px 16px}.lap{font-size:18px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="mark">⏱</div><div>PITWALL<small>Port Aurelia Grand Prix · Race</small></div></div>
+  <div class="lap mono" id="lap">LAP –<span>/–</span></div>
+  <div class="chip PRE" id="status">GRID</div>
+  <div class="lights" id="lights"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="clock mono" id="clock">00:00:00</div>
+  <div class="fl" id="fl"></div>
+  <div class="spacer"></div>
+  <div class="controls">
+    <button class="btn" id="play" title="Pause / play">❚❚</button>
+    <span id="speeds"></span>
+    <button class="btn" id="restart" title="New race">↻ New race</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h3><span>TIMING</span><span id="sub">Click a driver to highlight</span></h3>
+    <div class="tableWrap">
+      <div class="table">
+        <div class="cols thead">
+          <div style="text-align:center">POS</div><div>DRIVER</div><div>+/−</div><div>DRS</div><div>TYRE</div>
+          <div class="t">GAP</div><div class="t">INT</div><div class="t">LAST LAP</div><div class="t">BEST LAP</div>
+          <div>SECTOR 1</div><div>SECTOR 2</div><div>SECTOR 3</div>
+        </div>
+        <div class="tbody" id="tbody"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="card">
+      <h3><span>TRACK</span><span id="trackLbl">Port Aurelia · 5.12 km</span></h3>
+      <svg id="map" viewBox="0 0 600 380"></svg>
+    </section>
+    <section class="card">
+      <h3><span>RACE CONTROL</span></h3>
+      <div id="rc"></div>
+    </section>
+    <section class="card">
+      <h3><span>WEATHER</span></h3>
+      <div class="wx" id="wx"></div>
+    </section>
+  </aside>
+</main>
+<footer>Simulated race. All teams, drivers and the circuit are fictional. · <a href="./" style="color:inherit">Live timing</a></footer>
+
+<script>
+// ---------- Static data ----------
+const TEAMS = {
+  aur:{name:'Aurora Racing',color:'#3671ff',pace:0.0},
+  vlk:{name:'Valkyr GP',color:'#e8102d',pace:0.15},
+  nvx:{name:'Novax',color:'#00d2be',pace:0.25},
+  sol:{name:'Solstice',color:'#ff8a00',pace:0.1},
+  kst:{name:'Kestrel',color:'#22a06b',pace:0.75},
+  pnc:{name:'Pinnacle',color:'#ff7fc0',pace:0.95},
+  arc:{name:'Arcadia',color:'#6cc8ff',pace:0.85},
+  trn:{name:'Tern Motorsport',color:'#c4c8cc',pace:1.15},
+  zph:{name:'Zephyr',color:'#6be15a',pace:1.3},
+  ion:{name:'Ion Racing',color:'#8f7cff',pace:1.05},
+};
+const DRIVERS = [
+  ['Lucas Ferreira','FER',7,'aur',0.00],['Mika Hollanen','HOL',22,'aur',0.18],
+  ['Dario Conti','CON',16,'vlk',0.02],['Theo Marchand','MAR',55,'vlk',0.12],
+  ['Jonas Weber','WEB',3,'nvx',0.05],['Kai Tanaka','TAN',11,'nvx',0.15],
+  ['Oscar Lindqvist','LIN',81,'sol',0.03],['Rafael Ortiz','ORT',4,'sol',0.08],
+  ['Ethan Brooks','BRO',63,'kst',0.06],['Leo Moretti','MOR',12,'kst',0.2],
+  ['Pierre Duval','DUV',10,'pnc',0.1],['Sam Okafor','OKA',31,'pnc',0.14],
+  ['Noah Fischer','FIS',27,'arc',0.09],['Yuki Arata','ARA',18,'arc',0.11],
+  ['Felix Novak','NOV',5,'trn',0.07],['Adrian Silva','SIL',9,'trn',0.16],
+  ['Max Kowalski','KOW',23,'zph',0.1],['Ivan Petrov','PET',2,'zph',0.2],
+  ['Hugo Laurent','LAU',44,'ion',0.04],['Ben Carter','CAR',77,'ion',0.17],
+];
+const TYRES = {
+  S:{color:'#ff3b3b',off:-0.75,deg:0.085,deg2:0.0025},
+  M:{color:'#f5c518',off:0,deg:0.05,deg2:0.0012},
+  H:{color:'#e8eaf0',off:0.45,deg:0.03,deg2:0.0006},
+};
+const TOTAL_LAPS = 52, BASE = 91.2, K = 21, MPS = 7; // 21 mini sectors, 7 per sector
+const TRACK_D = 'M 180 309 L 300 320 C 360 325 380 300 400 270 L 470 160 C 490 125 520 110 540 90 C 560 60 520 40 490 50 L 380 80 C 350 88 330 70 320 50 C 310 30 270 25 250 45 L 200 110 C 185 130 160 135 140 120 L 100 90 C 70 70 40 90 45 130 L 55 250 C 58 285 60 298 80 300 L 180 309 Z';
+const TURNS = [1,3,4,6,7,9,10,11,13,14,15,16];
+
+// ---------- Helpers ----------
+const rand = (a,b)=>a+Math.random()*(b-a);
+const pick = a=>a[Math.floor(Math.random()*a.length)];
+const $ = id=>document.getElementById(id);
+function fmtLap(s){ if(s==null||!isFinite(s)) return '–'; const m=Math.floor(s/60); const r=(s-m*60).toFixed(3).padStart(6,'0'); return m?`${m}:${r}`:r; }
+function fmtSec(s){ return s==null?'–':s.toFixed(3); }
+function fmtClock(s){ s=Math.max(0,Math.floor(s)); return [s/3600,(s%3600)/60,s%60].map(v=>String(Math.floor(v)).padStart(2,'0')).join(':'); }
+
+// ---------- State ----------
+let S, speed = 5, paused = false, selected = null;
+
+function newRace(){
+  const cars = DRIVERS.map(([name,code,num,team,skill],i)=>{
+    const pace = BASE + TEAMS[team].pace + skill;
+    return {i,name,code,num,team,color:TEAMS[team].color,pace,
+      dist:0,speed:0,times:[],lastG:-1,laps:0,lapStart:0,lastLap:null,bestLap:null,
+      cur:[null,null,null],prev:[null,null,null],curC:[], prevC:[], bestSec:[Infinity,Infinity,Infinity],
+      minis:Array(K).fill(''),bestMini:Array(K).fill(Infinity),miniNoise:1,lapNoise:0,
+      compound:'M',age:0,stops:0,plan:[],pitPhase:null,outLap:false,inPit:false,
+      drs:false,dnf:false,finished:false,finishOrder:0,launch:0,passing:null,grid:0};
+  });
+  // qualifying: pace + noise
+  const grid = cars.map(c=>({c,q:c.pace+rand(-0.35,0.35)})).sort((a,b)=>a.q-b.q).map(x=>x.c);
+  grid.forEach((c,idx)=>{
+    c.grid = idx+1;
+    c.dist = -0.0015 - idx*0.0018;
+    c.launch = rand(0.15,0.55);
+    // strategy
+    const two = Math.random()<0.35;
+    if(two){ c.compound = 'S'; const a=Math.round(rand(12,18)), b=Math.round(rand(30,38)); c.plan=[[a,'M'],[b,pick(['H','M'])]]; }
+    else { c.compound = idx<10&&Math.random()<0.6 ? 'S' : 'M'; const a = c.compound==='S'?Math.round(rand(16,23)):Math.round(rand(22,30)); c.plan=[[a,'H']]; }
+    c.lapNoise = 3.5; // standing-start lap is slower
+  });
+  S = {t:0, pre:0, started:false, lightsHold:rand(0.6,2.2), cars, status:'GREEN', yellowSector:null,
+    scLaps:0, vscLaps:0, yellowLaps:0, drsLap:3, leaderLap:0, chequered:false, finishCount:0,
+    bestMini:Array(K).fill(Infinity), bestSec:[Infinity,Infinity,Infinity], fastest:null,
+    order:grid.slice(), msgs:[], incidentLap: Math.random()<0.7 ? Math.round(rand(12,38)) : -1,
+    wx:{air:rand(22,29),track:rand(36,46),hum:rand(40,65),wind:rand(0.8,4),dir:Math.round(rand(0,359)),press:rand(1008,1016),rain:false}};
+  $('rc').innerHTML=''; selected=null;
+  buildRows();
+  rc('GREEN LIGHT - PIT EXIT OPEN','green',true);
+}
+
+// ---------- Race control ----------
+function rc(txt,flag='',pre=false){
+  const m = {lap: pre?0:Math.min(TOTAL_LAPS,Math.max(1,S.leaderLap+1)), t:S.t, txt, flag};
+  S.msgs.unshift(m);
+  const el = document.createElement('div');
+  el.className = 'msg'+(flag?' flag-'+flag:'');
+  el.innerHTML = `<div class="when mono">${pre?'PRE':'L'+m.lap}<br>${fmtClock(m.t)}</div><div class="txt">${txt}</div>`;
+  $('rc').prepend(el);
+  while($('rc').children.length>60) $('rc').lastChild.remove();
+}
+const carTag = c=>`CAR ${c.num} (${c.code})`;
+
+// ---------- Simulation ----------
+function lapTime(c){
+  const ty = TYRES[c.compound];
+  const fuel = (TOTAL_LAPS - c.laps)*0.032;
+  return c.pace + ty.off + ty.deg*c.age + ty.deg2*c.age*c.age + fuel + c.lapNoise;
+}
+function classDist(c){
+  if(c.dnf) return -1000 + c.dist;
+  if(c.finished) return c.laps - c.finishOrder*1e-6;
+  return c.dist;
+}
+
+function step(dt){
+  S.t += dt;
+  const order = S.order;
+  let ahead = null;
+  for(const c of order){
+    if(c.dnf){ c.speed=0; continue; }
+    const frac = c.dist - Math.floor(c.dist);
+    const L = lapTime(c);
+    let v = 1/(L*c.miniNoise);
+    if(S.t < c.launch) v = 0;
+    else if(c.laps===0 && c.dist<0.03) v *= Math.min(1,(S.t-c.launch)/4+0.25); // launch acceleration
+    // pit lane
+    c.inPit = (c.pitPhase==='in' && frac>=0.96 && c.dist>0.5) || (c.pitPhase==='out' && frac<0.04);
+    if(c.inPit) v = 0.08/(0.08*c.pace + 21);
+    if(c.finished) v = 1/(L*1.35);
+    else if(!c.inPit){
+      if(S.status==='SC'){
+        if(!ahead) v = 1/(c.pace*1.42);
+        else v = (ahead.dist - c.dist) > 0.008 ? 1/(c.pace*1.12) : ahead.speed;
+      } else if(S.status==='VSC') v = 1/(c.pace*1.35);
+      else if(S.status==='YELLOW' && S.yellowSector===Math.floor(frac*3)) v *= 0.97;
+    }
+    c.speed = v;
+    if(!c.finished && !c.inPit) ahead = c;
+  }
+  // integrate with overtaking / blocking
+  ahead = null;
+  const noPass = S.status!=='GREEN';
+  for(const c of order){
+    if(c.dnf) continue;
+    const old = c.dist;
+    let nd = old + c.speed*dt;
+    if(!c.finished && !c.inPit && ahead){
+      const minGap = 0.0022;
+      if(c.passing && c.passing!==ahead.i) c.passing = null;
+      if(nd > ahead.dist - minGap && c.passing!==ahead.i){
+        const diff = c.speed/ahead.speed - 1;
+        const p = noPass ? 0 : 0.015 + Math.max(0,diff)*18 + (c.drs?0.22:0) + (S.leaderLap===0?0.25:0);
+        if(diff>0 && Math.random() < p*dt) c.passing = ahead.i;
+        else nd = Math.max(old, Math.min(nd, ahead.dist - minGap));
+      }
+    }
+    c.dist = nd;
+    if(!c.finished) crossings(c, old, nd, dt);
+    if(!c.finished && !c.inPit && !c.dnf) ahead = c;
+  }
+  S.order = S.cars.slice().sort((a,b)=>classDist(b)-classDist(a));
+}
+
+function crossings(c, old, nd, dt){
+  const g0 = Math.floor(old*K), g1 = Math.floor(nd*K);
+  for(let g=g0+1; g<=g1; g++){
+    if(g<0) continue;
+    const tc = S.t - dt + dt*((g/K - old)/(nd-old));
+    c.times[g] = tc; c.lastG = g;
+    const k = g % K;
+    if(g>0 && c.times[g-1]!=null){
+      // mini sector
+      const m = (g-1)%K, mt = tc - c.times[g-1];
+      let col = 'y';
+      if(c.inPit || c.pitPhase==='out' && k<=1) col='b';
+      else {
+        if(mt < c.bestMini[m]){ c.bestMini[m]=mt; col='g'; }
+        if(mt < S.bestMini[m] && g>K){ S.bestMini[m]=mt; col='p'; }
+      }
+      c.minis[m] = col;
+    }
+    c.miniNoise = 1 + rand(-0.007,0.007) + (Math.random()<0.01?0.04:0);
+    if(k%MPS===0 && g>0){
+      const s = (k===0?K:k)/MPS - 1;
+      const st = c.times[g-MPS]!=null ? tc - c.times[g-MPS] : null;
+      if(st!=null){
+        c.cur[s]=st;
+        let col='';
+        if(st < c.bestSec[s]){ c.bestSec[s]=st; col='green'; }
+        if(st < S.bestSec[s] && g>K){ S.bestSec[s]=st; col='purple'; }
+        c.curC[s]=col;
+      }
+    }
+    if(k===0 && g>0) lineCross(c, tc, g);
+  }
+}
+
+function lineCross(c, tc, g){
+  const lt = tc - c.lapStart;
+  c.lapStart = tc; c.laps++;
+  c.lastLap = lt;
+  c.lastPB = false; c.lastFL = false;
+  if(c.bestLap==null || lt < c.bestLap){ c.bestLap = lt; c.lastPB = true; }
+  if(c.laps>1 && (!S.fastest || lt < S.fastest.time)){
+    S.fastest = {time:lt, car:c, lap:c.laps}; c.lastFL = true;
+    if(c.laps>2) rc(`FASTEST LAP ${c.code} ${fmtLap(lt)}`,'purple');
+  }
+  c.prev = c.cur; c.prevC = c.curC; c.cur=[null,null,null]; c.curC=[];
+  c.minis = Array(K).fill('');
+  c.age++; c.lapNoise = rand(-0.25,0.25);
+  c.outLap = false;
+  if(c.pitPhase==='in'){
+    const nxt = c.plan.shift();
+    c.compound = nxt ? nxt[1] : (c.compound==='H'?'M':'H');
+    c.age = 0; c.stops++; c.pitPhase='out'; c.outLap = true;
+  } else if(c.pitPhase==='out') c.pitPhase=null;
+  // DRS detection at the line
+  const idx = S.order.indexOf(c);
+  const ah = S.order.slice(0,idx).reverse().find(x=>!x.dnf && !x.finished && x.times[g]!=null);
+  c.drs = S.status==='GREEN' && c.laps+1>=S.drsLap && ah && (tc - ah.times[g]) < 1.0 && !c.pitPhase;
+  // leader / race flow
+  const leader = S.order.find(x=>!x.dnf);
+  if(c.laps > S.leaderLap){ S.leaderLap = c.laps; leaderLap(c); }
+  // finish
+  if(S.chequered || c.laps >= TOTAL_LAPS){
+    c.finished = true; c.finishOrder = ++S.finishCount; c.drs=false;
+    if(!S.chequered){ S.chequered = true; S.status='FIN'; rc('CHEQUERED FLAG','');
+      rc(`${c.name.toUpperCase()} WINS THE PORT AURELIA GRAND PRIX`,'green'); }
+    return;
+  }
+  // plan pit for the end of this lap
+  if(c.plan.length && c.plan[0][0] <= c.laps+1 && !c.pitPhase) c.pitPhase='in';
+}
+
+function leaderLap(leader){
+  const L = S.leaderLap;
+  if(L+1===S.drsLap && S.status==='GREEN') rc('DRS ENABLED','green');
+  // flag countdowns
+  if(S.status==='SC'){
+    S.scLaps--;
+    if(S.scLaps===1) rc('SAFETY CAR IN THIS LAP','yellow');
+    if(S.scLaps<=0){ S.status='GREEN'; S.drsLap=L+3; rc('TRACK CLEAR','green'); rc('DRS DISABLED','') }
+  } else if(S.status==='VSC'){
+    S.vscLaps--;
+    if(S.vscLaps<=0){ S.status='GREEN'; rc('VIRTUAL SAFETY CAR ENDING','yellow'); rc('TRACK CLEAR','green'); }
+  } else if(S.status==='YELLOW'){
+    S.yellowLaps--;
+    if(S.yellowLaps<=0){ rc(`CLEAR IN TRACK SECTOR ${S.yellowSector+1}`,'green'); S.status='GREEN'; S.yellowSector=null; }
+  }
+  if(L >= TOTAL_LAPS-1) return;
+  // incidents
+  const running = S.cars.filter(c=>!c.dnf && !c.finished);
+  let victim = null;
+  if(L===S.incidentLap) victim = pick(running.filter(c=>c!==leader));
+  else if(L>1) for(const c of running){ if(c!==leader && Math.random()<0.0012){ victim=c; break; } }
+  if(victim && S.status==='GREEN') incident(victim, L);
+  // track limits / investigations
+  if(S.status==='GREEN' && Math.random()<0.22 && L>1){
+    const c = pick(running);
+    if(c.lastLap && c.laps>1) rc(`${carTag(c)} TIME ${fmtLap(c.lastLap)} DELETED - TRACK LIMITS AT TURN ${pick(TURNS)} LAP ${c.laps}`,'');
+  }
+  const lapped = running.filter(c=>leader.dist - c.dist > 0.9);
+  if(lapped.length && Math.random()<0.3){
+    const c=pick(lapped); rc(`BLUE FLAG FOR ${carTag(c)}`,'blue');
+  }
+  // weather drift
+  const w=S.wx; w.air+=rand(-0.15,0.15); w.track+=rand(-0.4,0.35); w.hum+=rand(-0.8,0.8); w.wind=Math.max(0,w.wind+rand(-0.3,0.3)); w.dir=(w.dir+Math.round(rand(-8,8))+360)%360;
+}
+
+function incident(c, L){
+  c.dnf = true; c.drs=false; c.dnfDist = c.dist;
+  const turn = pick(TURNS);
+  const r = Math.random();
+  rc(`${carTag(c)} STOPPED ON TRACK AT TURN ${turn}`,'yellow');
+  const sector = Math.floor((c.dist%1)*3);
+  if(r<0.45){
+    S.status='SC'; S.scLaps=Math.round(rand(3,5));
+    rc('SAFETY CAR DEPLOYED','yellow');
+    // opportunistic stops
+    for(const x of S.cars) if(!x.dnf && !x.finished && !x.pitPhase && x.plan.length && x.plan[0][0]-x.laps<=10 && x.age>8 && (x.dist%1)<0.9){ x.pitPhase='in'; x.plan[0][0]=x.laps+1; }
+  } else if(r<0.8){
+    S.status='VSC'; S.vscLaps=Math.round(rand(1,2));
+    rc('VIRTUAL SAFETY CAR DEPLOYED','yellow');
+  } else {
+    S.status='YELLOW'; S.yellowSector=sector; S.yellowLaps=1;
+    rc(`DOUBLE YELLOW IN TRACK SECTOR ${sector+1}`,'yellow');
+  }
+  rc(`${c.name.toUpperCase()} RETIRES FROM THE RACE`,'red');
+}
+
+// ---------- Table rendering ----------
+const rows = {};
+function buildRows(){
+  const tb = $('tbody'); tb.innerHTML='';
+  tb.style.height = `calc(var(--rowH) * ${S.cars.length})`;
+  for(const c of S.cars){
+    const el = document.createElement('div');
+    el.className='row cols';
+    el.innerHTML = `
+      <div class="pos mono"></div>
+      <div class="drv"><div class="bar" style="background:${c.color}"></div><div class="num mono">${c.num}</div>
+        <div style="min-width:0"><div class="code">${c.code}</div><div class="team">${TEAMS[c.team].name}</div></div><span class="tag" style="display:none"></span></div>
+      <div class="chg mono"></div>
+      <div class="drs">DRS</div>
+      <div class="tyre"><div class="tc"></div><small class="mono"></small></div>
+      <div class="t mono big gap"></div><div class="t mono big int"></div>
+      <div class="t mono big last"></div><div class="t mono big best"></div>
+      ${[0,1,2].map(()=>`<div class="sec"><div class="minis">${'<i></i>'.repeat(MPS)}</div><div class="mono"></div></div>`).join('')}`;
+    el.onclick = ()=>{ selected = selected===c.i?null:c.i; };
+    tb.appendChild(el);
+    const q = s=>el.querySelector(s);
+    rows[c.i] = {el,pos:q('.pos'),tag:q('.tag'),chg:q('.chg'),drs:q('.drs'),tc:q('.tc'),ty:q('.tyre small'),
+      gap:q('.gap'),int:q('.int'),last:q('.last'),best:q('.best'),
+      secs:[...el.querySelectorAll('.sec')].map(s=>({bars:[...s.querySelectorAll('i')],txt:s.querySelector('.mono')})),cache:{}};
+  }
+}
+function set(r,key,el,val,prop='textContent'){ if(r.cache[key]!==val){ r.cache[key]=val; el[prop]=val; } }
+
+function gapText(c, ref){
+  if(!ref || c.lastG<0 || ref.times[c.lastG]==null) return '–';
+  const lapsDown = Math.floor((ref.lastG - c.lastG)/K);
+  if(lapsDown>=1) return `+${lapsDown} LAP${lapsDown>1?'S':''}`;
+  return '+'+(c.times[c.lastG]-ref.times[c.lastG]).toFixed(3);
+}
+
+function render(){
+  const order = S.order;
+  const leader = order[0];
+  order.forEach((c,idx)=>{
+    const r = rows[c.i];
+    r.el.style.transform = `translateY(calc(var(--rowH) * ${idx}))`;
+    r.el.classList.toggle('sel', selected===c.i);
+    r.el.classList.toggle('dnf', c.dnf);
+    set(r,'pos',r.pos, c.dnf?'—':String(idx+1));
+    const status = c.dnf?'DNF':c.finished?'FIN':c.inPit?'PIT':c.outLap?'OUT':'';
+    if(r.cache.status!==status){ r.cache.status=status; r.tag.className='tag '+status; r.tag.textContent=status; r.tag.style.display=status?'':'none'; }
+    const d = c.grid-(idx+1);
+    set(r,'chg',r.chg, c.dnf?'':d>0?`▲${d}`:d<0?`▼${-d}`:'–');
+    set(r,'chgc',r.chg, 'chg mono '+(d>0?'up':d<0?'dn':'eq'),'className');
+    set(r,'drs',r.drs, 'drs'+(c.drs&&S.status==='GREEN'&&!c.finished?' on':''),'className');
+    set(r,'tc',r.tc, c.compound);
+    if(r.cache.tcc!==c.compound){ r.cache.tcc=c.compound; r.tc.style.borderColor=TYRES[c.compound].color; r.tc.style.color=TYRES[c.compound].color; }
+    set(r,'ty',r.ty, `${c.age} L\n${c.stops} PIT`);
+    r.ty.style.whiteSpace='pre';
+    if(!S.started){ set(r,'gap',r.gap,'–'); set(r,'int',r.int,'–'); }
+    else if(c.dnf){ set(r,'gap',r.gap,'DNF'); set(r,'int',r.int,''); }
+    else if(idx===0){ set(r,'gap',r.gap, c.finished?'WINNER':'LEADER'); set(r,'int',r.int, c.lastG>=K?`LAP ${Math.min(TOTAL_LAPS,c.laps+(c.finished?0:1))}`:''); }
+    else { set(r,'gap',r.gap,gapText(c,leader)); set(r,'int',r.int,gapText(c,order[idx-1])); }
+    set(r,'last',r.last, fmtLap(c.lastLap));
+    set(r,'lastc',r.last, 't mono big '+(c.lastFL&&S.fastest&&S.fastest.car===c?'c-purple':c.lastPB?'c-green':''),'className');
+    set(r,'best',r.best, fmtLap(c.bestLap));
+    set(r,'bestc',r.best, 't mono big '+(S.fastest&&S.fastest.car===c?'c-purple':''),'className');
+    for(let s=0;s<3;s++){
+      const sec = r.secs[s];
+      for(let m=0;m<MPS;m++){ const v=c.minis[s*MPS+m]; set(r,'m'+s+m,sec.bars[m], v||'','className'); }
+      const done = c.cur[s]!=null;
+      const val = done?c.cur[s]:c.prev[s];
+      const col = done?c.curC[s]:'';
+      set(r,'s'+s,sec.txt, val==null?'–':fmtSec(val));
+      set(r,'sc'+s,sec.txt, 'mono '+(done?(col?'c-'+col:''):'dimt'),'className');
+    }
+  });
+  // header
+  const lap = Math.min(TOTAL_LAPS, S.leaderLap + (S.chequered?0:1));
+  $('lap').innerHTML = `LAP ${S.started?lap:'–'}<span>/${TOTAL_LAPS}</span>`;
+  const st = !S.started?'PRE':S.status;
+  const label = {PRE:'GRID',GREEN:'TRACK CLEAR',YELLOW:'YELLOW FLAG',SC:'SAFETY CAR',VSC:'VIRTUAL SC',RED:'RED FLAG',FIN:'CHEQUERED FLAG'}[st];
+  $('status').className='chip '+st; $('status').textContent=label;
+  $('clock').textContent = fmtClock(S.t);
+  $('fl').innerHTML = S.fastest?`Fastest lap <b class="mono">${fmtLap(S.fastest.time)}</b> ${S.fastest.car.code} · L${S.fastest.lap}`:'';
+  const w=S.wx;
+  $('wx').innerHTML = [['AIR',w.air.toFixed(1)+'°'],['TRACK',w.track.toFixed(1)+'°'],['HUMIDITY',Math.round(w.hum)+'%'],
+    ['WIND',w.wind.toFixed(1)+' m/s'],['DIRECTION',w.dir+'°'],['RAIN',w.rain?'Yes':'No']]
+    .map(([k,v])=>`<div><small>${k}</small><b class="mono">${v}</b></div>`).join('');
+}
+
+// ---------- Track map ----------
+const NS='http://www.w3.org/2000/svg';
+const svg=$('map');
+let trackPath, trackLen, sectorPath, dots={};
+function buildMap(){
+  svg.innerHTML='';
+  const mk=(tag,attrs,parent=svg)=>{const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);parent.appendChild(e);return e;};
+  mk('path',{d:TRACK_D,fill:'none',stroke:'#1d2029','stroke-width':18,'stroke-linejoin':'round'});
+  trackPath = mk('path',{d:TRACK_D,fill:'none',stroke:'#3a3f4c','stroke-width':7,'stroke-linejoin':'round'});
+  trackLen = trackPath.getTotalLength();
+  sectorPath = mk('path',{d:TRACK_D,fill:'none',stroke:'transparent','stroke-width':7,'stroke-linejoin':'round'});
+  // sector boundaries + start line
+  [0,1/3,2/3].forEach((f,i)=>{
+    const p=trackPath.getPointAtLength(f*trackLen), q=trackPath.getPointAtLength(f*trackLen+1);
+    const a=Math.atan2(q.y-p.y,q.x-p.x)+Math.PI/2, l=12;
+    mk('line',{x1:p.x-Math.cos(a)*l,y1:p.y-Math.sin(a)*l,x2:p.x+Math.cos(a)*l,y2:p.y+Math.sin(a)*l,stroke:i?'#5b6170':'#fff','stroke-width':i?2:3});
+    if(i) { const t=mk('text',{x:p.x+Math.cos(a)*22,y:p.y+Math.sin(a)*22+4,fill:'#5b6170','font-size':11,'font-weight':700,'text-anchor':'middle'}); t.textContent='S'+(i+1); }
+  });
+  const g = mk('g',{});
+  dots={};
+  for(const c of S.cars){
+    const grp=mk('g',{},g);
+    const circ=mk('circle',{r:7,fill:c.color,stroke:'#0b0c10','stroke-width':2},grp);
+    const txt=mk('text',{x:10,y:4,fill:'#e8eaf0','font-size':10,'font-weight':700,'font-family':'JetBrains Mono'},grp);
+    txt.textContent=c.code;
+    grp.style.cursor='pointer';
+    grp.addEventListener('click',()=>{ selected = selected===c.i?null:c.i; });
+    dots[c.i]={grp,circ,txt};
+  }
+}
+function renderMap(){
+  // flag tint
+  if(S.status==='YELLOW'&&S.yellowSector!=null){
+    sectorPath.setAttribute('stroke','#f5c518');
+    sectorPath.setAttribute('stroke-dasharray',`0 ${S.yellowSector*trackLen/3} ${trackLen/3} ${trackLen}`);
+  } else if(S.status==='SC'||S.status==='VSC'){
+    sectorPath.setAttribute('stroke','#f5c51888'); sectorPath.setAttribute('stroke-dasharray','none');
+  } else sectorPath.setAttribute('stroke','transparent');
+  // draw leader last so it sits on top
+  for(let n=S.order.length-1;n>=0;n--){
+    const c=S.order[n], d=dots[c.i];
+    if(c.dnf && S.status!=='SC' && S.status!=='VSC' && S.status!=='YELLOW'){ d.grp.style.display='none'; continue; }
+    d.grp.style.display='';
+    let f = c.dnf? c.dnfDist : c.dist; f = ((f%1)+1)%1;
+    const p = trackPath.getPointAtLength(f*trackLen);
+    const sel = selected===c.i;
+    d.grp.setAttribute('transform',`translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`);
+    d.circ.setAttribute('r', sel?9:6.5);
+    d.circ.setAttribute('stroke', sel?'#fff':'#0b0c10');
+    d.grp.style.opacity = c.inPit||c.dnf ? 0.45 : (selected!=null && !sel ? 0.55 : 1);
+    d.txt.style.display = (n<3||sel)?'':'none';
+    d.grp.parentNode.appendChild(d.grp);
+  }
+}
+
+// ---------- Controls ----------
+const SPEEDS=[1,2,5,10,30];
+$('speeds').innerHTML = SPEEDS.map(s=>`<button class="btn${s===speed?' active':''}" data-s="${s}">${s}×</button>`).join(' ');
+$('speeds').onclick = e=>{ const s=+e.target.dataset.s; if(!s) return; speed=s; [...$('speeds').children].forEach(b=>b.classList.toggle('active',+b.dataset.s===s)); };
+$('play').onclick = ()=>{ paused=!paused; $('play').textContent = paused?'▶':'❚❚'; };
+$('restart').onclick = ()=>{ newRace(); buildMap(); };
+
+// ---------- Main loop ----------
+let lastT = performance.now(), lastRender = 0;
+function frame(now){
+  const realDt = Math.min(0.1,(now-lastT)/1000); lastT = now;
+  if(!paused){
+    if(!S.started){
+      S.pre += realDt;
+      const on = Math.min(5, Math.floor(S.pre/0.9));
+      [...$('lights').children].forEach((l,i)=>l.classList.toggle('on', i<on && S.pre < 4.5+S.lightsHold));
+      if(S.pre >= 4.5 + S.lightsHold){ S.started=true; rc('LIGHTS OUT AND AWAY WE GO','green'); }
+    } else {
+      let simDt = realDt*speed;
+      while(simDt>0){ const d=Math.min(0.05,simDt); step(d); simDt-=d; }
+    }
+  }
+  renderMap();
+  if(now-lastRender>120){ render(); lastRender=now; }
+  requestAnimationFrame(frame);
+}
+newRace(); buildMap(); render();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
