@@ -103,6 +103,31 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .fc .ic{font-size:17px;line-height:1.2}
 .fc b{font-size:13px;font-weight:600}
 .fc .wet{color:#6fa8ff}
+/* Rain watch */
+.rainPill{background:#13294a;border:1px solid #2b5aa3;color:#9cc4ff;border-radius:6px;padding:5px 10px;font:inherit;font-weight:700;font-size:12px;letter-spacing:.05em;cursor:pointer}
+.rainPill.now{background:#1d4ed8;border-color:#60a5fa;color:#fff;animation:rainPulse 2s infinite}
+@keyframes rainPulse{50%{box-shadow:0 0 0 6px rgba(96,165,250,0)}0%{box-shadow:0 0 0 0 rgba(96,165,250,.6)}}
+.rainBox{padding:12px 14px;border-bottom:1px solid var(--line)}
+.rainHead{font-weight:700;font-size:15px}
+.rainHead.now{color:#7db4ff} .rainHead.soon{color:#9cc4ff} .rainHead.dry{color:var(--green)}
+.rainLines{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.6}
+.rainLines b{color:var(--text);font-weight:600}
+.rainLines b.wet,.wet{color:#6fa8ff}
+.r15{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:10px;height:58px}
+.r15 div{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:3px}
+.r15 i{display:block;width:100%;background:#22324d;border-radius:3px 3px 0 0;min-height:2px}
+.r15 i.on{background:#3b82f6}
+.r15 small{font-size:9px;color:var(--dim);height:11px;white-space:nowrap}
+.r15cap{font-size:10px;color:var(--dim);margin-top:4px;letter-spacing:.04em}
+.radar{position:relative;overflow:hidden;background:#0e1014}
+.radar .rl{position:absolute;inset:0;transition:opacity .25s}
+.radar .base{filter:invert(1) hue-rotate(180deg) grayscale(.6) brightness(.75) contrast(.9)}
+.radar img{position:absolute;width:256px;height:256px;max-width:none;user-select:none;pointer-events:none}
+.rmark{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.rmark .ring{fill:none;stroke:#fff;stroke-opacity:.55;stroke-width:1.2;stroke-dasharray:4 4}
+.rmark .ring2{fill:none;stroke:#fff;stroke-opacity:.25;stroke-width:1;stroke-dasharray:3 5}
+.rmark .dot{fill:#ff3b3b;stroke:#fff;stroke-width:2}
+.radarNote{padding:8px 14px 12px;color:var(--dim);font-size:11px;line-height:1.5}
 
 /* Race engineer panel */
 .left{display:flex;flex-direction:column;gap:16px;min-width:0}
@@ -212,6 +237,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   <div class="brand"><div class="mark">⏱</div><div>PITWALL<small id="meeting">Connecting…</small></div></div>
   <div class="lap mono" id="lap"></div>
   <div class="chip GREY" id="track">–</div>
+  <div id="rainPill"></div>
   <div class="clock mono" id="clock"></div>
   <div class="spacer"></div>
   <div class="delay mono" id="delay" title="How far behind F1's own timing the screen is (middle value over the last 30 seconds)"><small>DELAY</small>–</div>
@@ -258,8 +284,15 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
     </section>
     <section class="card">
       <h3><span>WEATHER AT THE TRACK</span><span id="fcPlace"></span></h3>
+      <div class="rainBox" id="rainBox"></div>
       <div class="wx" id="wx"></div>
       <div class="fc" id="fc"></div>
+    </section>
+    <section class="card">
+      <h3><span>RAIN RADAR</span><span id="radarTime"></span></h3>
+      <div class="radar" id="radar"></div>
+      <div class="radarNote">The last hour of rain around the circuit (dot). Rings are 25 and 50 km.
+        Radar: <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a> · Map © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors · Forecast: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></div>
     </section>
   </aside>
 </main>
@@ -521,6 +554,7 @@ function render(){
   });
 
   renderRC(); renderWeather(); renderSheet();
+  if(typeof renderRain==='function') renderRain();
 }
 
 // ---------- Phone details card ----------
@@ -603,7 +637,7 @@ function renderWeather(){
 
 // ---------- Forecast (Open-Meteo, free, no key) ----------
 // F1's feed gives the conditions right now; this adds the next 6 hours near the circuit.
-let forecast = null, forecastFor = null, forecastPlace = null;
+let forecast = null, forecastFor = null, forecastPlace = null, rain15 = null;
 const WX_ICON = c => c===0?'☀️':c<=2?'🌤️':c===3?'☁️':c<=48?'🌫️':c<=57?'🌦️':c<=67?'🌧️':c<=77?'❄️':c<=82?'🌦️':'⛈️';
 async function loadForecast(force){
   const m = state.SessionInfo?.Meeting;
@@ -619,11 +653,13 @@ async function loadForecast(force){
       forecastPlace = {key:m.Key, lat:hit.latitude, lon:hit.longitude, name:hit.name};
     }
     const p = forecastPlace;
-    const f = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&forecast_hours=6&timeformat=unixtime`)).json();
+    const f = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.lat}&longitude=${p.lon}&hourly=temperature_2m,precipitation_probability,precipitation,weather_code&forecast_hours=6&minutely_15=precipitation&forecast_minutely_15=8&timeformat=unixtime`)).json();
     forecast = f.hourly?.time ? f.hourly : null;
+    rain15 = f.minutely_15?.time ? f.minutely_15 : null;
     forecastAt = Date.now();
-  }catch{ forecast = null; }
+  }catch{ forecast = null; rain15 = null; }
   renderForecast();
+  if(typeof renderRain==='function'){ renderRain(); loadRadar(); }
 }
 // Refresh every 5 minutes, and straight away when you come back to the tab.
 setInterval(()=>loadForecast(true), 5*60*1000);
@@ -752,5 +788,6 @@ requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
 <script src="engineer.js"></script>
+<script src="rain.js"></script>
 </body>
 </html>
