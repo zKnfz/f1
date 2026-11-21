@@ -58,6 +58,16 @@ function bestLap(n) {
   return lapSecs(L.BestLapTime?.Value);
 }
 const pbSectors = n => arr(state.TimingStats?.Lines?.[n]?.BestSectors).map(x => lapSecs(x?.Value));
+// The sector times a projection is measured against: the driver's own best sectors. A driver
+// with no proper lap yet only has slow ones (an out lap, a cool-down lap), which used to give
+// projections many seconds out. `loose` marks that: a best sector missing or more than 4%
+// off the quickest in the field. Those laps are projected from the field's sectors instead.
+const REF_CAP = 1.04;
+function refSectors(n) {
+  const pb = pbSectors(n), fb = fieldBestSectors();
+  const loose = fb.every(Boolean) && [0, 1, 2].some(i => pb[i] == null || pb[i] > fb[i] * REF_CAP);
+  return { pb: loose ? pb.map((v, i) => (v == null || v > fb[i] * REF_CAP ? fb[i] * REF_CAP : v)) : pb, loose, fb };
+}
 function fieldBestSectors() {
   const out = [Infinity, Infinity, Infinity];
   for (const n of drivers()) pbSectors(n).forEach((v, i) => { if (v && v < out[i]) out[i] = v; });
@@ -131,6 +141,7 @@ const SEG_PURPLE = 2051, SEG_GREEN = 2049, SEG_YELLOW = 2048, SEG_PIT = 2064;
 //          share on purple bars, tyre age (per 10 laps), compound vs the one they set their best on]
 const FEATS = ['base', 'pace so far', 'yellow bars', 'purple bars', 'tyre age', 'harder tyre'];
 const PRIOR = {
+  quali: [-0.003, 0.15, 0.0065, -0.002, 0.003, 0.005], // the track gets quicker through qualifying
   race:  [0.0075, 0.2,  0.0065, -0.002, 0.001, 0.004],
   other: [0.004,  0.12, 0.0065, -0.002, 0.003, 0.005],
 };
@@ -145,8 +156,9 @@ const SIGMA_PRIOR = [0.0125, 0.009, 0.0105], SIGMA_PRIOR_N = 15;
 const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
 const COMPOUND = { SOFT: 0, MEDIUM: 1, HARD: 2 };
 
-const modelGroup = () => (sessionKind() === 'race' ? 'race' : 'other');
-const modelKey = () => `pitwall-model-v3-${state.SessionInfo?.Meeting?.Circuit?.Key ?? 'x'}-${modelGroup()}`;
+const modelGroup = () => { const k = sessionKind(); return k === 'race' ? 'race' : k === 'quali' ? 'quali' : 'other'; };
+const modelKey = () => `pitwall-model-v4-${state.SessionInfo?.Meeting?.Circuit?.Key ?? 'x'}-${modelGroup()}`;
+const MAX_Y = 0.05;
 let model = null; // { key, A (6×6), b (6), laps, used: {lapId: 1}, theta, drv: {n: [residuals]} }
 
 function blankModel(key) {
@@ -199,6 +211,7 @@ function solveTheta(m) {
 }
 function theta() { const m = loadModel(); return (m.theta ??= solveTheta(m)); }
 function addSample(m, f, y, w, n, stage = 1) {
+  if (!(Math.abs(y) < MAX_Y)) return; // a lap this far from its reference was not a like-for-like lap
   const pred = f.reduce((a, x, i) => a + x * (m.theta ?? solveTheta(m))[i], 0);
   for (let i = 0; i < 6; i++) {
     m.b[i] = m.b[i] * FORGET + w * f[i] * y;
@@ -267,6 +280,7 @@ es.addEventListener('feed', e => {
     const p = lapInputs(n);
     if (!p || p.slow) continue;
     // Keep one snapshot per quarter of each sector, so every lap counts about the same.
+    if (p.loose) continue; // no proper reference lap yet: nothing to learn from
     (lapSnaps[n] ??= {})[`${p.done}:${Math.min(3, Math.floor(p.frac * 4))}`] = { f: p.f, doneT: p.doneT, pbRest: p.pbRest, done: p.done };
   }
 });
@@ -305,12 +319,19 @@ function lapInputs(n) {
   const lit = inSegs.slice(0, last + 1).filter(Boolean);
   if (done === 0 && !lit.length) return null;
   if ([0, 1, 2].slice(0, done + 1).flatMap(segsOf).includes(SEG_PIT)) return null; // out lap
-  const pb = pbSectors(n);
+  const { pb, loose, fb } = refSectors(n);
   let doneT = 0, donePb = 0;
   for (let i = 0; i < done; i++) { doneT += cur[i]; donePb += pb[i] ?? cur[i]; }
+  if (loose && done) {
+    // No proper lap of their own to go by: assume the rest of the lap is as far off the
+    // field's best sectors as the part already done.
+    const k = doneT / fb.slice(0, done).reduce((a, b) => a + b, 0);
+    for (let i = 0; i < 3; i++) pb[i] = i < done ? cur[i] : fb[i] * k;
+    donePb = doneT;
+  }
   const segCounts = [0, 1, 2].map(i => segsOf(i).length), segAll = segCounts.reduce((a, b) => a + b, 0);
   const lapFrac = segAll ? (segCounts.slice(0, done).reduce((a, b) => a + b, 0) + last + 1) / segAll : null;
-  const out = { done, cur, doneT, lapFrac, delta: doneT - donePb, frac: inSegs.length ? (last + 1) / inSegs.length : 0, segDone: lit.length, segTotal: inSegs.length };
+  const out = { done, cur, doneT, lapFrac, loose, delta: doneT - donePb, frac: inSegs.length ? (last + 1) / inSegs.length : 0, segDone: lit.length, segTotal: inSegs.length };
   if (pb.some(v => v == null)) return out;
 
   // Not pushing? Only in practice and qualifying, where not every lap is a flying lap.
@@ -328,11 +349,11 @@ function lapInputs(n) {
 function liveLap(n) {
   const p = lapInputs(n);
   if (!p) return null;
-  const base = { done: p.done, cur: p.cur, delta: p.delta, segDone: p.segDone, segTotal: p.segTotal, lapFrac: p.lapFrac };
+  const base = { done: p.done, cur: p.cur, delta: p.delta, segDone: p.segDone, segTotal: p.segTotal, lapFrac: p.lapFrac, loose: p.loose };
   if (p.slow) return { ...base, projected: null, slow: true };
   if (!p.f) return { ...base, projected: null };
   const th = theta();
-  const adj = p.f.reduce((a, x, i) => a + x * th[i], 0) + driverNudge(n);
+  const adj = p.loose && p.done ? 0 : p.f.reduce((a, x, i) => a + x * th[i], 0) + driverNudge(n);
   return { ...base, left: p.pbRest, projected: p.doneT + p.pbRest * (1 + Math.max(-0.02, Math.min(0.15, adj))) };
 }
 // What the model has learned, for display.
@@ -655,7 +676,7 @@ function flagRisk(n, lv) {
 function projSigma(lv) {
   const g = loadModel().sg?.[lv.done] || { e2: 0, en: 0 }, p0 = SIGMA_PRIOR[lv.done] ?? 0.01;
   const k = Math.sqrt((g.e2 + p0 ** 2 * SIGMA_PRIOR_N) / (g.en + SIGMA_PRIOR_N));
-  return Math.max(0.06, k * (lv.left ?? 30));
+  return Math.max(0.06, k * (lv.left ?? 30)) * (lv.loose ? 2.5 : 1);
 }
 
 // ---------- Chance calibration ----------
@@ -841,7 +862,7 @@ function projMount(el) {
       }
       const ch = calibrate(chance[n] ?? 0), pct = Math.round(ch * 100);
       const chCls = ch >= 0.5 ? 'hi' : ch >= 0.15 ? 'mid' : 'lo';
-      tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.done === 0 ? ' rough' : ''}"><b>${lv.done === 0 ? '≈' : ''}${tw('p' + n, p)}</b> <span class="dimt pjsig">±${projSigma(lv).toFixed(1)}</span></td>`
+      tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.loose ? ' rough' : ''}"><b>${lv.loose ? '≈' : ''}${tw('p' + n, p)}</b> <span class="dimt pjsig">±${projSigma(lv).toFixed(1)}</span></td>`
         + `<td class="mono t pjvs ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
@@ -863,7 +884,7 @@ function projMount(el) {
   const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
-  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet.`);
+  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet. A driver with no proper lap of their own yet is also marked ≈, with a wider ±.`);
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
   const pjBody = el.querySelector('#pjBody');

@@ -23,7 +23,7 @@ const PORT = 8799;
 const arg = (name, dflt) => { const a = process.argv.find(x => x.startsWith(`--${name}=`)); return a ? Number(a.split('=')[1]) : dflt; };
 const TEST = process.argv.includes('--test');
 const WAIT_MIN = arg('wait', 40), MAX_MIN = arg('max', 120);
-const KEYS = /^pitwall-(model-v3-|calib-v1$|score-v1-)/;
+const KEYS = /^pitwall-(model-v4-|calib-v1$|score-v1-)/;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
@@ -55,7 +55,7 @@ const open = async () => {
 // What the page currently knows. `state`, `hist` and the learning stores are the page's own.
 const look = () => page.evaluate(() => {
   const size = k => { try { const d = JSON.parse(localStorage.getItem(k)); return d?.laps?.length ?? d?.laps ?? d?.pts?.length ?? 0; } catch { return 0; } };
-  const keys = Object.keys(localStorage).filter(k => /^pitwall-(model-v3-|calib-v1$|score-v1-)/.test(k));
+  const keys = Object.keys(localStorage).filter(k => /^pitwall-(model-v4-|calib-v1$|score-v1-)/.test(k));
   return {
     feed: typeof feedStatus === 'undefined' ? null : feedStatus,
     meeting: state.SessionInfo?.Meeting?.Name ?? null,
