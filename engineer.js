@@ -808,6 +808,92 @@ function keyedRows(tbody, items) {
   requestAnimationFrame(() => { for (const tr of tbody.querySelectorAll('.pjnew')) tr.classList.remove('pjnew'); });
 }
 
+// ---------- Pole call ----------
+// One plain answer for qualifying: who ends this part on top. Every driver still in gets a
+// spread of possible final times, then the part is played out a few thousand times:
+//   · the time they already hold,
+//   · a lap in progress (its projection and usual error),
+//   · or, if they are likely to run again, a lap near the sum of their best sectors.
+const POLE_RUNS = 3000;
+function poleCall() {
+  const td = state.TimingData || {}, part = td.SessionPart || 1, lines = L_();
+  const running = state.SessionStatus?.Status === 'Started';
+  const c = state.ExtrapolatedClock;
+  let left = c ? parseHms(c.Remaining) : null;
+  if (left != null && c.Extrapolating && c.Utc) left -= Date.now() - Date.parse(c.Utc);
+  const leftS = left == null ? null : left / 1000;
+  const cars = [];
+  let anyLive = false, anyGuess = false;
+  for (const n of engOrder()) {
+    const L = lines[n] || {};
+    if (L.KnockedOut || L.Retired || L.Stopped) continue;
+    // Only a time set in this part counts: Q3 starts from nothing.
+    const parts = arr(L.BestLapTimes);
+    const best = parts.length ? lapSecs(parts[part - 1]?.Value) : bestLap(n), lv = L.InPit ? null : liveLap(n);
+    let lap = null, why = best ? `holding ${fmtLapT(best)}` : 'no time yet';
+    if (lv?.projected) {
+      const risk = flagRisk(n, lv);
+      lap = { m: lv.projected, s: projSigma(lv), w: risk.mult * (lv.done ? 1 : 0.9) };
+      why = lv.done ? `on a lap · heading for ${fmtLapT(lv.projected)}` : 'just started a lap';
+      if (risk.label) why += ` · ${risk.label}`;
+      anyLive = true;
+    } else if (running) {
+      // Not on a push lap. Will they get another one in? A guess from where they are and the clock.
+      const ref = refSectors(n);
+      const ideal = !ref.loose && ref.pb.every(Boolean) ? ref.pb.reduce((a, b) => a + b, 0) : null;
+      const w = leftS == null ? 0.5 : L.InPit ? (leftS > 240 ? 0.7 : leftS > 110 ? 0.35 : 0) : (leftS > 20 ? 0.8 : 0.5);
+      if (ideal && w > 0) {
+        lap = { m: ideal * 1.0015, s: ideal * 0.0035, w };
+        why = `${best ? `holding ${fmtLapT(best)}` : 'no time yet'} · ${L.InPit ? 'may run again' : 'on track, lap to come'}`;
+        anyGuess = true;
+      }
+    }
+    if (best || lap) cars.push({ n, best, lap, why, wins: 0 });
+  }
+  if (!cars.length) return null;
+  // Same inputs give the same answer: a fixed-seed random stream, so the numbers don't flicker.
+  let seed = 20261121;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  let runs = 0;
+  for (let k = 0; k < POLE_RUNS; k++) {
+    let win = null, t = Infinity;
+    for (const car of cars) {
+      let x = car.best ?? Infinity;
+      if (car.lap) { const u = rnd(), g = gauss(); if (u < car.lap.w) x = Math.min(x, car.lap.m + g * car.lap.s); }
+      if (x < t) { t = x; win = car; }
+    }
+    if (win) { win.wins++; runs++; }
+  }
+  if (!runs) return null;
+  for (const car of cars) car.ch = car.wins / runs;
+  cars.sort((a, b) => b.ch - a.ch || (a.best ?? Infinity) - (b.best ?? Infinity));
+  return { part, cars, running, anyLive, anyGuess, settled: !cars.some(c => c.lap) };
+}
+function poleHtml() {
+  const p = poleCall();
+  if (!p) return '';
+  const top = p.cars[0], pct = x => { const v = Math.round(x * 100); return v === 100 && x < 0.995 ? 99 : v < 1 && x > 0 ? '<1' : v; };
+  const what = p.part === 3 ? 'pole' : `top of Q${p.part}`;
+  const title = p.part === 3 ? 'Pole call' : `Who tops Q${p.part}`;
+  let verdict, cls;
+  if (p.settled) { verdict = `${esc(dInfo(top.n).code)} has ${p.part === 3 ? 'pole' : `topped Q${p.part}`}`; cls = 'hi'; }
+  else if (top.ch >= 0.75) { verdict = `Strong favourite for ${what}`; cls = 'hi'; }
+  else if (top.ch >= 0.5) { verdict = `Favourite for ${what}`; cls = 'mid'; }
+  else { verdict = `Open: no clear favourite for ${what}`; cls = 'lo'; }
+  const basis = p.settled ? 'No laps left to come.'
+    : p.anyLive ? `<b>Live</b> · based on the laps on track now${p.anyGuess ? ', plus a guess at who still runs again' : ''}. It firms up as each car passes sector 1.`
+    : '<b>Early estimate</b> · nobody is on a lap. Based on each driver\'s best sectors and who is likely to run again, so treat it as a rough guide.';
+  const rows = p.cars.slice(0, 5).map(c => {
+    const k = c.ch >= 0.5 ? 'hi' : c.ch >= 0.15 ? 'mid' : 'lo';
+    return `<tr><td>${chipD(c.n)}</td><td class="pjch"><div class="chbar ${k}"><i style="width:${Math.max(Math.round(c.ch * 100), c.ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct(c.ch)}%</span></td><td class="dimt polewhy">${c.why}</td></tr>`;
+  }).join('');
+  return `<div class="ecard pole ${cls}"><h4>${title}</h4>
+    <div class="polehead"><span class="polepct mono">${p.settled ? '🏁' : pct(top.ch) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
+    <table class="et polet">${rows}</table>
+    <p class="note">${basis}${p.part === 3 ? '' : ' Pole itself is decided in Q3.'} These are chances, not certainties.</p></div>`;
+}
+
 const lapBarW = {};
 function projMount(el) {
   const lines = L_(), race = sessionKind() === 'race';
@@ -872,9 +958,9 @@ function projMount(el) {
 
   // Build the frame once; after that only rows and notes change.
   if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
-    el.innerHTML = `<div id="pjFrame"><div id="pjLearn"></div><p class="note" id="pjNote"></p>
+    el.innerHTML = `<div id="pjFrame"><div id="pjPole"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
-      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div></div>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div><div id="pjLearn"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
     el.dataset.pjRace = String(race);
     el.dataset.html = '';
@@ -885,6 +971,7 @@ function projMount(el) {
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
   setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet. A driver with no proper lap of their own yet is also marked ≈, with a wider ±.`);
+  setHtml('pjPole', sessionKind() === 'quali' ? poleHtml() : '');
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
   const pjBody = el.querySelector('#pjBody');
