@@ -7,9 +7,9 @@
 let engTab = {}, engCompare = null, engLastSel;
 
 const ENG_TABS = {
-  race: [['driver', 'Driver'], ['battles', 'Battles'], ['laps', 'Lap times'], ['strategy', 'Strategy']],
-  quali: [['driver', 'Driver'], ['knockout', 'Knockout'], ['laps', 'Lap times']],
-  practice: [['driver', 'Driver'], ['longruns', 'Long runs'], ['laps', 'Lap times'], ['strategy', 'Tyres']],
+  race: [['driver', 'Driver'], ['proj', 'Projected'], ['battles', 'Battles'], ['laps', 'Lap times'], ['strategy', 'Strategy']],
+  quali: [['driver', 'Driver'], ['proj', 'Projected'], ['knockout', 'Knockout'], ['laps', 'Lap times']],
+  practice: [['driver', 'Driver'], ['proj', 'Projected'], ['longruns', 'Long runs'], ['laps', 'Lap times'], ['strategy', 'Tyres']],
 };
 
 // ---------- Data helpers ----------
@@ -65,7 +65,11 @@ function fieldBestSectors() {
 }
 // Sector times F1 has published for the lap in progress (it clears them at the start of each lap).
 function liveLap(n) {
-  const cur = arr(L_()[n]?.Sectors).map(s => lapSecs(s?.Value));
+  const raw = arr(L_()[n]?.Sectors).map(s => lapSecs(s?.Value));
+  // Only count sectors done in order from S1. At the start of a lap F1 can clear S1
+  // before S2 and S3, and those leftovers belong to the previous lap.
+  const cur = [null, null, null];
+  for (let i = 0; i < 3 && raw[i] != null; i++) cur[i] = raw[i];
   const done = cur.filter(v => v != null).length;
   if (done === 0 || done === 3) return null;
   const pb = pbSectors(n);
@@ -318,6 +322,44 @@ function panelKnockout() {
     <table class="et wide"><tr><th>Pos</th><th>Driver</th><th class="t">Best</th><th class="t">${cut ? 'vs cutoff' : 'vs pole'}</th><th>Live lap</th></tr>${rowsH}</table>`;
 }
 
+// Every car out on track, with the lap time it is heading for.
+function panelProjected() {
+  const lines = L_(), race = sessionKind() === 'race';
+  const f = window.sessionFastest;
+  const all = engOrder();
+  const fin = arr(state.RaceControlMessages?.Messages).some(m => m.Flag === 'CHEQUERED');
+  const cars = all.map(n => {
+    const L = lines[n] || {};
+    if (L.InPit || L.Retired || L.Stopped || L.KnockedOut || (fin && (Number(L.Status) & 1024))) return null;
+    return { n, L, lv: liveLap(n), pb: pbSectors(n) };
+  }).filter(Boolean);
+  if (!cars.length) return '<p class="note">No cars are out on track right now.</p>';
+  cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0));
+  const secCell = (v, pb, i, cur) => {
+    if (v != null) return `<td class="mono t ${pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
+    const later = cur && cur.slice(i + 1).some(x => x != null);
+    const next = cur && !later && cur.findIndex(x => x == null) === i;
+    return `<td class="mono t dimt">${later ? '–' : next ? 'on it' : ''}</td>`;
+  };
+  const rowsH = cars.map(({ n, L, lv, pb }) => {
+    const cur = lv?.cur || [null, null, null];
+    const outLap = !!L.PitOut;
+    let proj = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${outLap ? 'out lap' : 'starting a lap'}</td>`;
+    if (lv?.projected) {
+      const d = f ? lv.projected - f.t : null;
+      const best = bestLap(n);
+      const pos = all.filter(m => m !== n && (bestLap(m) ?? Infinity) < lv.projected).length + 1;
+      const dCls = d != null && d < 0 ? 'c-purple' : d != null && d < 0.3 ? 'c-yellow' : '';
+      proj = `<td class="mono t"><b>${fmtLapT(lv.projected)}</b>${best && lv.projected < best ? ' <span class="c-green" title="Faster than their best lap">PB</span>' : ''}</td>`
+        + `<td class="mono t ${dCls}">${d != null && d < 0 ? '⚡ ' : ''}${signed(d)}</td>`
+        + (race ? '' : `<td class="mono t">P${pos}</td>`);
+    }
+    return `<tr class="${n === selected ? 'selrow' : ''}"><td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${proj}</tr>`;
+  }).join('');
+  return `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projected laps assume each driver matches their own best in the sectors still to come. Green sectors beat their best, yellow ones don't.</p>
+    <table class="et wide"><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t">Projected</th><th class="t">vs fastest</th>${race ? '' : '<th class="t">Would be</th>'}</tr>${rowsH}</table>`;
+}
+
 function panelLongRuns() {
   const rowsD = [];
   for (const n of drivers()) {
@@ -419,7 +461,7 @@ function engRender() {
   $('drvWrap').style.display = ['driver', 'laps'].includes(tab) ? '' : 'none';
 
   if (!n) { $('engBody').innerHTML = '<p class="note">Waiting for timing data…</p>'; return; }
-  const body = tab === 'driver' ? panelDriver(n) : tab === 'battles' ? panelBattles() : tab === 'knockout' ? panelKnockout()
+  const body = tab === 'driver' ? panelDriver(n) : tab === 'battles' ? panelBattles() : tab === 'knockout' ? panelKnockout() : tab === 'proj' ? panelProjected()
     : tab === 'longruns' ? panelLongRuns() : tab === 'strategy' ? panelStrategy() : panelLaps(n);
   const recorded = Object.values(hist.laps).reduce((a, l) => a + l.length, 0);
   $('engInfo').textContent = `${recorded} laps recorded`;
