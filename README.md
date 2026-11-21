@@ -41,18 +41,22 @@ forces a mode, and `?feeds=3` sets the connection count in direct mode.
 ## Self-tuning and the session recorder
 
 The lap projections tune themselves: after every lap the page compares what it projected with
-the real lap time and adjusts. To keep that going when nobody has the page open, a scheduled
-GitHub Actions job (`.github/workflows/record.yml`) checks every 15 minutes whether a session
-is on. If one is, it opens the page in a headless browser for the whole session
-(`tools/record.mjs`) and commits what the page learned to `learned/`. Every visitor's browser
-then loads those files when they hold more than the browser has learned itself.
+the real lap time and adjusts. Each browser learns on its own while the page is open.
 
-Run it by hand from the repo's Actions tab ("Record F1 sessions" → Run workflow), or locally:
+To learn from sessions when nobody has the page open, and to share the result with every
+visitor, run the recorder on a computer with a normal home connection:
 
 ```bash
-npm install --no-save playwright-core
-node tools/record.mjs --test
+tools/record-and-share.sh
 ```
+
+It checks the F1 schedule, and if a session is on (or starts within 25 minutes) it opens the
+page in a headless Chrome for the whole session (`tools/record.mjs`), then commits what the
+page learned to `learned/` and pushes it. Every visitor's browser loads those files when they
+hold more than the browser has learned itself. It needs Google Chrome and Node 18 or newer.
+
+This cannot run as a GitHub Actions job: Formula 1's network refuses connections from
+GitHub's servers (HTTP 403).
 
 ## Notes
 - Data comes from Formula 1's public live timing feed and the circuit outlines from
