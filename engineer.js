@@ -808,8 +808,8 @@ function projMount(el) {
   for (const c of cars) if (c.lv?.projected) { risk[c.n] = flagRisk(c.n, c.lv); chance[c.n] = (chance[c.n] ?? 0) * risk[c.n].mult; }
 
   cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
-  const secCell = (v, pb, i, cur) => {
-    if (v != null) return `<td class="mono t ${pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
+  const secCell = (v, pb, i, cur, purple) => {
+    if (v != null) return `<td class="mono t ${purple ? 'c-purple' : pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
     const later = cur && cur.slice(i + 1).some(x => x != null);
     const next = cur && !later && cur.findIndex(x => x == null) === i;
     return `<td class="mono t dimt${i === 2 ? ' pjs3' : ''}">${later ? '–' : next ? 'on it' : ''}</td>`;
@@ -842,7 +842,7 @@ function projMount(el) {
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
+    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur, !!arr(L.Sectors)[i]?.OverallFastest)).join('')}${bestCell}${tail}` };
   });
 
   // Build the frame once; after that only rows and notes change.
