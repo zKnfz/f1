@@ -97,61 +97,170 @@ es.addEventListener('feed', e => {
   }
 });
 
-// The lap in progress, projected from sector times and the coloured mini-sector bars.
-// Purple and green bars mean matching or beating their best there, yellow means slower.
-// Tuned on recorded laps (2026 São Paulo race, Las Vegas FP3):
-//  - Drivers rarely match their best sectors, so the rest of the lap is set a little slower
-//    than their best (PACE_BASE).
-//  - Being slow so far only partly carries into the rest of the lap (PACE_CARRY).
-//  - Each driver's own recent laps nudge that, since some get closer to their best than others.
-// Average error on push laps: about 0.3s after S1 and 0.1 to 0.3s after S2.
+// ---------- Lap projection (self-tuning) ----------
+// A lap in progress is projected as:
+//   time so far + (driver's best times for the rest of the lap) × (1 + adjustment)
+// The adjustment is a weighted sum of inputs (pace so far, coloured bars, tyres), plus a
+// per-driver nudge. The weights start from values fitted on recorded laps, then the site keeps
+// refitting them after every completed lap, saved per track in this browser. Newer laps count
+// more, so it follows the track getting faster.
 const SEG_PURPLE = 2051, SEG_GREEN = 2049, SEG_YELLOW = 2048, SEG_PIT = 2064;
-const YELLOW_COST = 0.006;
-const MODEL = { race: { base: 0.0075, carry: 0.2 }, other: { base: 0.004, carry: 0.12 } };
+// Inputs: [constant, pace in finished sectors, share of the rest driven on yellow bars,
+//          share on purple bars, tyre age (per 10 laps), compound vs the one they set their best on]
+const FEATS = ['base', 'pace so far', 'yellow bars', 'purple bars', 'tyre age', 'harder tyre'];
+const PRIOR = {
+  race:  [0.0075, 0.2,  0.0065, -0.002, 0.001, 0.004],
+  other: [0.004,  0.12, 0.0065, -0.002, 0.003, 0.005],
+};
+// How strongly the starting values hold before enough laps are in (in laps' worth), and the
+// typical size of each input so that strength means the same thing for each.
+const PRIOR_LAPS = 15, FEAT_SCALE = [1, 0.02, 0.15, 0.1, 0.8, 1];
+const FORGET = 0.997; // each new sample makes older ones count a little less
 // Beyond these, a practice or qualifying lap is a cool-down or an aborted lap.
 const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
+const COMPOUND = { SOFT: 0, MEDIUM: 1, HARD: 2 };
 
-// How much slower than the model each driver's recent push laps were (shrunk towards 0).
-let driverOffCache = { key: '', at: 0, v: {} };
-function driverOffset(n) {
-  const nowKey = hist.key + ':' + Object.values(hist.laps).reduce((a, l) => a + l.length, 0);
-  if (driverOffCache.key !== nowKey) {
-    const m = MODEL[sessionKind() === 'race' ? 'race' : 'other'], v = {};
-    for (const [d, laps] of Object.entries(hist.laps)) {
-      let pb = [null, null, null], best = null; const res = [];
-      for (const r of laps) {
-        const sc = r.s || [];
-        const ok = sc.length === 3 && sc.every(x => x > 0) && !r.pit && (r.ts || '1') === '1';
-        if (!ok) continue;
-        if (pb.every(Boolean) && best && r.time < best * 1.03) {
-          for (const st of [1, 2]) {
-            const x = sc.slice(0, st).reduce((a, b) => a + b, 0) / pb.slice(0, st).reduce((a, b) => a + b, 0) - 1;
-            const y = sc.slice(st).reduce((a, b) => a + b, 0) / pb.slice(st).reduce((a, b) => a + b, 0) - 1;
-            res.push(y - (m.base + m.carry * x));
-          }
-        }
-        pb = pb.map((p, i) => (p == null || sc[i] < p ? sc[i] : p));
-        best = best == null || r.time < best ? r.time : best;
-      }
-      const recent = res.slice(-12);
-      v[d] = recent.length ? Math.max(-0.01, Math.min(0.02, recent.reduce((a, b) => a + b, 0) / (recent.length + 6))) : 0;
+const modelGroup = () => (sessionKind() === 'race' ? 'race' : 'other');
+const modelKey = () => `pitwall-model-v2-${state.SessionInfo?.Meeting?.Circuit?.Key ?? 'x'}-${modelGroup()}`;
+let model = null; // { key, A (6×6), b (6), laps, used: {lapId: 1}, theta, drv: {n: [residuals]} }
+
+function blankModel(key) {
+  return { key, A: Array.from({ length: 6 }, () => Array(6).fill(0)), b: Array(6).fill(0), laps: 0, used: {}, drv: {}, theta: null };
+}
+function loadModel() {
+  const key = modelKey();
+  if (model?.key === key) return model;
+  let m = null;
+  try { m = JSON.parse(localStorage.getItem(key)); } catch {}
+  model = m?.key === key ? m : blankModel(key);
+  model.theta = null;
+  trainFromHistory();
+  return model;
+}
+let saveModelTimer = null;
+function saveModel() {
+  if (saveModelTimer) return;
+  saveModelTimer = setTimeout(() => {
+    saveModelTimer = null;
+    try {
+      const ids = Object.keys(model.used);
+      if (ids.length > 3000) for (const id of ids.slice(0, ids.length - 3000)) delete model.used[id];
+      localStorage.setItem(model.key, JSON.stringify({ ...model, theta: null }));
+    } catch {}
+  }, 2000);
+}
+// Solve (A + prior) θ = b + prior·θ0 by Gaussian elimination.
+function solveTheta(m) {
+  const p = PRIOR[modelGroup()];
+  const M = m.A.map((row, i) => row.slice()), v = m.b.slice();
+  for (let i = 0; i < 6; i++) { const lam = PRIOR_LAPS * FEAT_SCALE[i] ** 2; M[i][i] += lam; v[i] += lam * p[i]; }
+  for (let c = 0; c < 6; c++) {
+    let piv = c; for (let r = c + 1; r < 6; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]]; [v[c], v[piv]] = [v[piv], v[c]];
+    if (Math.abs(M[c][c]) < 1e-12) return p.slice();
+    for (let r = 0; r < 6; r++) if (r !== c) {
+      const f = M[r][c] / M[c][c];
+      if (f) { for (let k = c; k < 6; k++) M[r][k] -= f * M[c][k]; v[r] -= f * v[c]; }
     }
-    driverOffCache = { key: nowKey, v };
   }
-  return driverOffCache.v[n] || 0;
+  const th = v.map((x, i) => x / M[i][i]);
+  return th.every(isFinite) ? th : p.slice();
+}
+function theta() { const m = loadModel(); return (m.theta ??= solveTheta(m)); }
+function addSample(m, f, y, w, n) {
+  const pred = f.reduce((a, x, i) => a + x * (m.theta ?? solveTheta(m))[i], 0);
+  for (let i = 0; i < 6; i++) {
+    m.b[i] = m.b[i] * FORGET + w * f[i] * y;
+    for (let j = 0; j < 6; j++) m.A[i][j] = m.A[i][j] * FORGET + w * f[i] * f[j];
+  }
+  m.theta = null;
+  const r = (m.drv[n] ??= []); r.push(y - pred); if (r.length > 12) r.shift();
+}
+function driverNudge(n) {
+  const r = loadModel().drv[n] || [];
+  return r.length ? Math.max(-0.01, Math.min(0.02, r.reduce((a, b) => a + b, 0) / (r.length + 6))) : 0;
 }
 
-function liveLap(n) {
+// Tyre inputs: age in tens of laps, and compound steps harder than the set their best came on.
+function bestCompound(n) {
+  let best = null;
+  for (const r of hist.laps[n] || []) if (r.time && !r.pit && (!best || r.time < best.time)) best = r;
+  return best?.c ?? null;
+}
+function tyreFeats(compound, age, n) {
+  const c = COMPOUND[compound], pc = COMPOUND[bestCompound(n)];
+  return [Math.min(Math.max((Number(age) || 1) - 1, 0), 20) / 10, c != null && pc != null ? c - pc : 0];
+}
+
+// Learn from the laps already saved for this session (sector times only, no bars).
+function trainFromHistory() {
+  const m = model;
+  if (!hist.key) return;
+  for (const [n, laps] of Object.entries(hist.laps)) {
+    let pb = [null, null, null], best = null;
+    for (const r of laps) {
+      const sc = r.s || [];
+      const ok = sc.length === 3 && sc.every(x => x > 0) && !r.pit && (r.ts || '1') === '1';
+      if (!ok) continue;
+      const id = `${hist.key}:${n}:${r.lap}:${r.at}`;
+      // The saved history can start partway through a session, so only learn once the
+      // best sectors seen so far are close to the driver's real ones.
+      const real = pbSectors(n), realSum = real.every(Boolean) ? real.reduce((a, b) => a + b, 0) : null;
+      const settled = realSum && pb.every(Boolean) && pb.reduce((a, b) => a + b, 0) <= realSum * 1.01;
+      if (settled && best && r.time < best * 1.03 && !m.used[id]) {
+        m.used[id] = 1; m.laps++;
+        const tf = tyreFeats(r.c, r.age, n);
+        for (const done of [1, 2]) {
+          const doneT = sc.slice(0, done).reduce((a, b) => a + b, 0), donePb = pb.slice(0, done).reduce((a, b) => a + b, 0);
+          const pbRest = pb.slice(done).reduce((a, b) => a + b, 0);
+          addSample(m, [1, doneT / donePb - 1, 0, 0, ...tf], (r.time - doneT) / pbRest - 1, 1, n);
+        }
+      }
+      pb = pb.map((p, i) => (p == null || sc[i] < p ? sc[i] : p));
+      best = best == null || r.time < best ? r.time : best;
+    }
+  }
+  saveModel();
+}
+es.addEventListener('history', () => setTimeout(() => { model = null; }, 0));
+
+// Snapshots of each lap in progress, turned into learning samples once the lap time is in.
+const lapSnaps = {}, doneSnaps = {};
+es.addEventListener('feed', e => {
+  const [topic, data] = e.detail;
+  if (topic !== 'TimingData' || !data?.Lines) return;
+  for (const n of Object.keys(data.Lines)) {
+    if (data.Lines[n]?.LastLapTime?.Value) { doneSnaps[n] = lapSnaps[n]; lapSnaps[n] = {}; continue; }
+    const p = lapInputs(n);
+    if (!p || p.slow) continue;
+    // Keep one snapshot per quarter of each sector, so every lap counts about the same.
+    (lapSnaps[n] ??= {})[`${p.done}:${Math.min(3, Math.floor(p.frac * 4))}`] = { f: p.f, doneT: p.doneT, pbRest: p.pbRest };
+  }
+});
+es.addEventListener('lap', e => {
+  const [n, rec] = e.detail;
+  const snaps = Object.values(doneSnaps[n] || {}); doneSnaps[n] = null;
+  if (!snaps.length || !rec?.time || rec.pit || (rec.ts || '1') !== '1') return;
+  const best = bestLap(n);
+  if (best && rec.time > best * 1.03) return; // not a push lap
+  const m = loadModel(), id = `${hist.key}:${n}:${rec.lap}:${rec.at}`;
+  if (m.used[id]) return;
+  m.used[id] = 1; m.laps++;
+  for (const s of snaps) addSample(m, s.f, (rec.time - s.doneT) / s.pbRest - 1, 3 / snaps.length, n);
+  saveModel();
+});
+
+// Where a driver is on the current lap and the model inputs for it.
+function lapInputs(n) {
   const secs = arr(L_()[n]?.Sectors);
   const raw = secs.map(s => lapSecs(s?.Value));
   const segsOf = i => arr(secs[i]?.Segments).map(x => Number(x?.Status) || 0);
-  const anyLit = i => segsOf(i).some(Boolean);
   let done = 0;
   const t = lapTrack[n];
   if (t?.known) { while (done < 3 && t.fresh[done] && raw[done] != null) done++; }
   else {
     // Before the first lap end since the page opened, go by which sector's bars are lit.
-    const litIdx = [0, 1, 2].filter(anyLit);
+    const litIdx = [0, 1, 2].filter(i => segsOf(i).some(Boolean));
     if (!litIdx.length) return null;
     done = Math.max(...litIdx);
     if ([0, 1, 2].slice(0, done).some(i => raw[i] == null)) return null;
@@ -165,33 +274,35 @@ function liveLap(n) {
   const pb = pbSectors(n);
   let doneT = 0, donePb = 0;
   for (let i = 0; i < done; i++) { doneT += cur[i]; donePb += pb[i] ?? cur[i]; }
-  const delta = doneT - donePb;
-  const base = { done, cur, delta, segDone: lit.length, segTotal: inSegs.length };
-  if (pb.some(v => v == null)) return { ...base, projected: null };
+  const out = { done, cur, doneT, delta: doneT - donePb, frac: inSegs.length ? (last + 1) / inSegs.length : 0, segDone: lit.length, segTotal: inSegs.length };
+  if (pb.some(v => v == null)) return out;
 
-  const race = sessionKind() === 'race';
-  const m = MODEL[race ? 'race' : 'other'];
-  // Pace so far: finished sectors, plus the bars lit in this sector.
-  const segR = v => v === SEG_PURPLE ? 1 - YELLOW_COST / 3 : v === SEG_GREEN ? 1 : v === SEG_YELLOW ? 1 + YELLOW_COST : null;
-  const litR = lit.map(segR).filter(v => v != null);
-  const curR = litR.length ? litR.reduce((a, b) => a + b, 0) / litR.length : null;
-  const frac = inSegs.length ? (last + 1) / inSegs.length : 0;
-  const partPb = curR != null ? pb[done] * frac : 0;
-  const soFarT = doneT + (curR != null ? partPb * curR : 0), soFarPb = donePb + partPb;
-  const x = soFarPb ? soFarT / soFarPb - 1 : 0;
-
-  // Not pushing? Only in practice and qualifying, where every lap is not a flying lap.
-  if (!race) {
-    const bestI1 = Number(state.TimingStats?.Lines?.[n]?.BestSpeeds?.I1?.Value);
-    const i1 = i1Track[n];
-    if ((done && delta / donePb > SLOW_AFTER[done - 1]) || (i1 && bestI1 && i1 < bestI1 * SLOW_I1))
-      return { ...base, projected: null, slow: true };
+  // Not pushing? Only in practice and qualifying, where not every lap is a flying lap.
+  if (sessionKind() !== 'race') {
+    const bestI1 = Number(state.TimingStats?.Lines?.[n]?.BestSpeeds?.I1?.Value), i1 = i1Track[n];
+    if ((done && out.delta / donePb > SLOW_AFTER[done - 1]) || (i1 && bestI1 && i1 < bestI1 * SLOW_I1)) return { ...out, slow: true };
   }
+  const pbRest = pb.slice(done).reduce((a, b) => a + b, 0);
+  const share = k => inSegs.length ? lit.filter(v => v === k).length / inSegs.length * pb[done] / pbRest : 0;
+  const st = arr(state.TimingAppData?.Lines?.[n]?.Stints).at(-1) || {};
+  const f = [1, done ? doneT / donePb - 1 : 0, share(SEG_YELLOW), share(SEG_PURPLE), ...tyreFeats(st.Compound, st.TotalLaps, n)];
+  return { ...out, f, pbRest };
+}
 
-  const rRest = 1 + m.base + m.carry * x + driverOffset(n);
-  let projected = soFarT + (pb[done] - partPb) * rRest;
-  for (let i = done + 1; i < 3; i++) projected += pb[i] * rRest;
-  return { ...base, projected, pace: rRest };
+function liveLap(n) {
+  const p = lapInputs(n);
+  if (!p) return null;
+  const base = { done: p.done, cur: p.cur, delta: p.delta, segDone: p.segDone, segTotal: p.segTotal };
+  if (p.slow) return { ...base, projected: null, slow: true };
+  if (!p.f) return { ...base, projected: null };
+  const th = theta();
+  const adj = p.f.reduce((a, x, i) => a + x * th[i], 0) + driverNudge(n);
+  return { ...base, projected: p.doneT + p.pbRest * (1 + Math.max(-0.02, Math.min(0.15, adj))) };
+}
+// What the model has learned, for display.
+function modelInfo() {
+  const m = loadModel();
+  return { laps: m.laps, theta: theta() };
 }
 
 // Compare a lap in progress with the fastest lap of the session.
@@ -503,7 +614,11 @@ function panelProjected() {
     }).join('');
     board = `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et">${board}</table></div>`;
   }
-  return `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector: yellow bars make it slower, green and purple keep it on pace. The rest of the lap is based on their best sectors, how this lap is going, and how close each driver usually gets to their best. ≈ means rough: before sector 1 is done it can be a second or two out. Green sector times beat their best, yellow ones don't.</p>
+  const mi = modelInfo(), lapT = f?.t || 90;
+  const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
+  const learned = `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
+    + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`;
+  return learned + `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector: yellow bars make it slower, green and purple keep it on pace. The rest of the lap is based on their best sectors, how this lap is going, their tyres, and how close each driver usually gets to their best. ≈ means rough: before sector 1 is done it can be a second or two out. Green sector times beat their best, yellow ones don't.</p>
     <div class="${race ? '' : 'pjgrid'}"><div>${table}</div>${board}</div>`;
 }
 
