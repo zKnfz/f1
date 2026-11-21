@@ -817,7 +817,8 @@ function keyedRows(tbody, items) {
 const POLE_RUNS = 3000;
 function poleCall() {
   const td = state.TimingData || {}, part = td.SessionPart || 1, lines = L_();
-  const running = state.SessionStatus?.Status === 'Started';
+  // 'Inactive' is the wait before a part starts: laps are still to come, so give the early estimate.
+  const running = ['Started', 'Inactive'].includes(state.SessionStatus?.Status);
   const c = state.ExtrapolatedClock;
   let left = c ? parseHms(c.Remaining) : null;
   if (left != null && c.Extrapolating && c.Utc) left -= Date.now() - Date.parse(c.Utc);
