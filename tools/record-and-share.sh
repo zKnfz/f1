@@ -11,13 +11,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# A scheduler starts with a bare PATH, so find Node (nvm or Homebrew) and git ourselves.
+# A scheduler starts with a bare PATH, so find git and a recent Node ourselves.
+# Prefer the newest Node installed with nvm; an old system Node cannot run the recorder.
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
-if ! command -v node >/dev/null; then
-  newest=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)
-  [ -n "$newest" ] && export PATH="$newest:$PATH"
-fi
+newest=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)
+[ -n "$newest" ] && export PATH="$newest:$PATH"
 command -v node >/dev/null || { echo "$(date) Node not found"; exit 1; }
+if [ "$(node -p 'Number(process.versions.node.split(".")[0]) >= 18')" != "true" ]; then echo "$(date) Node $(node -v) is too old (need 18 or newer)"; exit 1; fi
 
 [ -d node_modules/playwright-core ] || npm install --no-save --no-package-lock playwright-core
 
