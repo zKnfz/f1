@@ -116,6 +116,8 @@ const PRIOR = {
 // typical size of each input so that strength means the same thing for each.
 const PRIOR_LAPS = 15, FEAT_SCALE = [1, 0.02, 0.15, 0.1, 0.8, 1];
 const FORGET = 0.997; // each new sample makes older ones count a little less
+// Usual error per second of lap still to go (learned; starts from the recorded laps).
+const SIGMA_PRIOR = 0.009, SIGMA_PRIOR_N = 20;
 // Beyond these, a practice or qualifying lap is a cool-down or an aborted lap.
 const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
 const COMPOUND = { SOFT: 0, MEDIUM: 1, HARD: 2 };
@@ -125,7 +127,7 @@ const modelKey = () => `pitwall-model-v2-${state.SessionInfo?.Meeting?.Circuit?.
 let model = null; // { key, A (6×6), b (6), laps, used: {lapId: 1}, theta, drv: {n: [residuals]} }
 
 function blankModel(key) {
-  return { key, A: Array.from({ length: 6 }, () => Array(6).fill(0)), b: Array(6).fill(0), laps: 0, used: {}, drv: {}, theta: null };
+  return { key, A: Array.from({ length: 6 }, () => Array(6).fill(0)), b: Array(6).fill(0), laps: 0, used: {}, drv: {}, theta: null, e2: 0, en: 0 };
 }
 function loadModel() {
   const key = modelKey();
@@ -175,6 +177,7 @@ function addSample(m, f, y, w, n) {
   }
   m.theta = null;
   const r = (m.drv[n] ??= []); r.push(y - pred); if (r.length > 12) r.shift();
+  m.e2 = (m.e2 || 0) * FORGET + w * (y - pred) ** 2; m.en = (m.en || 0) * FORGET + w;
 }
 function driverNudge(n) {
   const r = loadModel().drv[n] || [];
@@ -297,7 +300,7 @@ function liveLap(n) {
   if (!p.f) return { ...base, projected: null };
   const th = theta();
   const adj = p.f.reduce((a, x, i) => a + x * th[i], 0) + driverNudge(n);
-  return { ...base, projected: p.doneT + p.pbRest * (1 + Math.max(-0.02, Math.min(0.15, adj))) };
+  return { ...base, left: p.pbRest, projected: p.doneT + p.pbRest * (1 + Math.max(-0.02, Math.min(0.15, adj))) };
 }
 // What the model has learned, for display.
 function modelInfo() {
@@ -548,7 +551,92 @@ function panelKnockout() {
 }
 
 // Every car out on track, with the lap time it is heading for.
-function panelProjected() {
+// ---------- Projected tab (animated) ----------
+// How unsure a projection is, in seconds. Errors grow with how much of the lap is left;
+// the size per second of lap left is learned along with the model (see addSample).
+function projSigma(lv) {
+  const m = loadModel();
+  const k = Math.sqrt(((m.e2 || 0) + SIGMA_PRIOR ** 2 * SIGMA_PRIOR_N) / ((m.en || 0) + SIGMA_PRIOR_N));
+  const left = lv.left ?? 30;
+  return Math.max(0.06, k * left * (lv.done === 0 ? 1.4 : 1));
+}
+// Normal distribution helpers.
+const npdf = (x, m, s) => Math.exp(-0.5 * ((x - m) / s) ** 2) / (s * 2.5066282746);
+function ncdf(x, m, s) {
+  const z = (x - m) / (s * Math.SQRT2), t = 1 / (1 + 0.3275911 * Math.abs(z));
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+  return 0.5 * (1 + (z >= 0 ? y : -y));
+}
+// Chance each lap in progress ends up as the fastest lap of the session: it has to beat the
+// fastest lap so far and every other lap in progress.
+function fastestChances(list, fastest) {
+  const out = {};
+  for (const a of list) {
+    const lo = a.p - 4 * a.s, hi = Math.min(a.p + 4 * a.s, fastest ?? Infinity);
+    if (!(hi > lo)) { out[a.n] = 0; continue; }
+    const steps = 160, dx = (hi - lo) / steps;
+    let pr = 0;
+    for (let k = 0; k <= steps; k++) {
+      const x = lo + k * dx;
+      let q = npdf(x, a.p, a.s) * (k === 0 || k === steps ? 0.5 : 1);
+      for (const b of list) if (b !== a) q *= 1 - ncdf(x, b.p, b.s);
+      pr += q * dx;
+    }
+    out[a.n] = Math.max(0, Math.min(1, pr));
+  }
+  return out;
+}
+
+// Smoothly counting lap times: each shown number eases towards its latest value.
+const twShown = {};
+function twTick() {
+  const els = document.querySelectorAll('#engBody .tw');
+  let moving = false;
+  for (const el of els) {
+    const key = el.dataset.k, target = Number(el.dataset.v);
+    const cur = twShown[key] ?? target;
+    const next = Math.abs(target - cur) < 0.0015 ? target : cur + (target - cur) * 0.18;
+    if (next !== target) moving = true;
+    twShown[key] = next;
+    const txt = fmtLapT(next);
+    if (el.textContent !== txt) el.textContent = txt;
+  }
+  if (moving) requestAnimationFrame(twTick); else twRunning = false;
+}
+let twRunning = false;
+const twKick = () => { if (!twRunning) { twRunning = true; requestAnimationFrame(twTick); } };
+const tw = (key, v) => `<span class="tw" data-k="${key}" data-v="${v}">${fmtLapT(twShown[key] ?? v)}</span>`;
+
+// Update a table's rows in place, keyed by id, and slide moved rows to their new spot.
+function keyedRows(tbody, items) {
+  const before = new Map();
+  for (const tr of tbody.children) before.set(tr.dataset.k, tr.getBoundingClientRect().top);
+  const keep = new Set(items.map(i => i.k));
+  for (const tr of [...tbody.children]) if (!keep.has(tr.dataset.k)) tr.remove();
+  const byKey = new Map([...tbody.children].map(tr => [tr.dataset.k, tr]));
+  items.forEach((it, idx) => {
+    let tr = byKey.get(it.k);
+    if (!tr) { tr = document.createElement('tr'); tr.dataset.k = it.k; tr.classList.add('pjnew'); }
+    if (tr.dataset.h !== it.html) { tr.innerHTML = it.html; tr.dataset.h = it.html; }
+    if (tr.dataset.c !== it.cls) { tr.className = it.cls + (tr.classList.contains('pjnew') ? ' pjnew' : ''); tr.dataset.c = it.cls; }
+    if (tbody.children[idx] !== tr) tbody.insertBefore(tr, tbody.children[idx] || null);
+  });
+  // FLIP: start each moved row where it was, then let it glide into place.
+  for (const tr of tbody.children) {
+    const was = before.get(tr.dataset.k);
+    if (was == null) continue;
+    const dy = was - tr.getBoundingClientRect().top;
+    if (Math.abs(dy) < 1) continue;
+    tr.style.transition = 'none';
+    tr.style.transform = `translateY(${dy}px)`;
+    tr.getBoundingClientRect();
+    tr.style.transition = 'transform .45s cubic-bezier(.2,.8,.2,1)';
+    tr.style.transform = '';
+  }
+  requestAnimationFrame(() => { for (const tr of tbody.querySelectorAll('.pjnew')) tr.classList.remove('pjnew'); });
+}
+
+function projMount(el) {
   const lines = L_(), race = sessionKind() === 'race';
   const f = window.sessionFastest;
   const all = engOrder();
@@ -558,43 +646,65 @@ function panelProjected() {
     if (L.InPit || L.Retired || L.Stopped || L.KnockedOut || (fin && (Number(L.Status) & 1024))) return null;
     return { n, L, lv: liveLap(n), pb: pbSectors(n), best: bestLap(n) };
   }).filter(Boolean);
-  // Where a time would land among the best laps already set (ignoring the driver's own).
   const posFor = (n, t) => all.filter(m => m !== n && (bestLap(m) ?? Infinity) < t).length + 1;
   const posNow = n => { const b = bestLap(n); return b ? posFor(n, b) : null; };
 
-  cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0));
+  // Chance of the fastest lap, from how far off each projection usually is at that point in a lap.
+  const live = cars.filter(c => c.lv?.projected).map(c => ({ n: c.n, p: c.lv.projected, s: projSigma(c.lv) }));
+  const chance = fastestChances(live, f?.t);
+
+  cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
   const secCell = (v, pb, i, cur) => {
     if (v != null) return `<td class="mono t ${pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
     const later = cur && cur.slice(i + 1).some(x => x != null);
     const next = cur && !later && cur.findIndex(x => x == null) === i;
     return `<td class="mono t dimt">${later ? '–' : next ? 'on it' : ''}</td>`;
   };
-  const rowsH = cars.map(({ n, L, lv, pb, best }) => {
+  const span = race ? 3 : 4;
+  const rows = cars.map(({ n, L, lv, pb, best }) => {
     const cur = lv?.cur || [null, null, null];
-    const pNow = race ? null : posNow(n);
     const bestCell = `<td class="mono t pjbest">${best ? fmtLapT(best) : '<span class="dimt">no time</span>'}</td>`;
-    let tail = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${lv?.slow ? 'slow lap · not pushing' : L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
+    let tail = `<td class="mono t dimt" colspan="${span}">${lv?.slow ? 'slow lap · not pushing' : L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
     if (lv?.projected) {
       const p = lv.projected, beatFL = f && p < f.t;
       const dBest = best ? p - best : null;
       let posTxt = '';
       if (!race) {
-        const pNew = posFor(n, p);
+        const pNew = posFor(n, p), pNow = posNow(n);
         posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt">stays</span>`;
       }
-      tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.done === 0 ? ' rough' : ''}" title="${lv.done === 0 ? 'Rough until sector 1 is done' : ''}"><b>${beatFL ? '⚡ ' : ''}${lv.done === 0 ? '≈' : ''}${fmtLapT(p)}</b></td>`
-        + `<td class="mono t ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
-        + (race ? '' : `<td class="mono t">${posTxt}</td>`);
+      const ch = chance[n] ?? 0, pct = Math.round(ch * 100);
+      const chCls = ch >= 0.5 ? 'hi' : ch >= 0.15 ? 'mid' : 'lo';
+      tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.done === 0 ? ' rough' : ''}"><b>${lv.done === 0 ? '≈' : ''}${tw('p' + n, p)}</b> <span class="dimt pjsig">±${projSigma(lv).toFixed(1)}</span></td>`
+        + `<td class="mono t pjvs ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
+        + (race ? '' : `<td class="mono t">${posTxt}</td>`)
+        + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    return `<tr class="${n === selected ? 'selrow' : ''}"><td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}</tr>`;
-  }).join('');
-  const table = cars.length
-    ? `<table class="et wide pj"><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t">vs best</th>${race ? '' : '<th class="t">Position</th>'}</tr>${rowsH}</table>`
-    : '<p class="note">No cars are out on track right now.</p>';
+    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
+  });
 
-  // Leaderboard of best laps so far, with laps in progress slotted in where they would land.
-  let board = '';
-  if (!race) {
+  // Build the frame once; after that only rows and notes change.
+  if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
+    el.innerHTML = `<div id="pjFrame"><div id="pjLearn"></div><p class="note" id="pjNote"></p>
+      <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table></div>
+      ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
+    el.dataset.pjRace = String(race);
+    el.dataset.html = '';
+  }
+  const setHtml = (id, h) => { const x = el.querySelector('#' + id); if (x && x.dataset.h !== h) { x.innerHTML = h; x.dataset.h = h; } };
+  const mi = modelInfo(), lapT = f?.t || 90;
+  const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
+  setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
+    + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
+  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session; even 90% misses one time in ten. ≈ means rough: before sector 1 is done it can be a second or two out.`);
+  setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
+  const pjBody = el.querySelector('#pjBody');
+  pjBody.closest('table').style.display = cars.length ? '' : 'none';
+  keyedRows(pjBody, rows);
+
+  const board = el.querySelector('#pjBoard');
+  if (board) {
     const entries = all.filter(n => bestLap(n)).map(n => ({ n, t: bestLap(n), live: false }));
     for (const c of cars) {
       const p = c.lv?.projected;
@@ -604,22 +714,18 @@ function panelProjected() {
     const top = entries.find(e => !e.live)?.t;
     const cut = sessionKind() === 'quali' ? arr(state.TimingData?.NoEntries)[(state.TimingData?.SessionPart || 1)] : null;
     let pos = 0;
-    board = entries.map(e => {
+    const items = [];
+    for (const e of entries) {
       if (!e.live) pos++;
-      const line = cut && !e.live && pos === cut + 1 ? `<tr class="cutline"><td colspan="3">knockout line</td></tr>` : '';
+      if (cut && !e.live && pos === cut + 1) items.push({ k: 'cut', cls: 'cutline', html: '<td colspan="3">knockout line</td>' });
       const gap = top ? (e.t === top && !e.live ? 'P1' : signed(e.t - top)) : '';
-      return line + (e.live
-        ? `<tr class="pjlive"><td class="mono">↳</td><td>${chipD(e.n)} <span class="dimt">in S${Math.min(3, e.done + 1)}</span></td><td class="mono t">${fmtLapT(e.t)} <span class="dimt">${gap}</span></td></tr>`
-        : `<tr><td class="mono">P${pos}</td><td>${chipD(e.n)}</td><td class="mono t">${fmtLapT(e.t)} <span class="dimt">${gap}</span></td></tr>`);
-    }).join('');
-    board = `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et">${board}</table></div>`;
+      items.push(e.live
+        ? { k: 'L' + e.n, cls: 'pjlive', html: `<td class="mono">↳</td><td>${chipD(e.n)} <span class="dimt">in S${Math.min(3, e.done + 1)}</span></td><td class="mono t">${tw('b' + e.n, e.t)} <span class="dimt">${gap}</span></td>` }
+        : { k: 'B' + e.n, cls: '', html: `<td class="mono">P${pos}</td><td>${chipD(e.n)}</td><td class="mono t">${fmtLapT(e.t)} <span class="dimt">${gap}</span></td>` });
+    }
+    keyedRows(board, items);
   }
-  const mi = modelInfo(), lapT = f?.t || 90;
-  const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
-  const learned = `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
-    + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`;
-  return learned + `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector: yellow bars make it slower, green and purple keep it on pace. The rest of the lap is based on their best sectors, how this lap is going, their tyres, and how close each driver usually gets to their best. ≈ means rough: before sector 1 is done it can be a second or two out. Green sector times beat their best, yellow ones don't.</p>
-    <div class="${race ? '' : 'pjgrid'}"><div>${table}</div>${board}</div>`;
+  twKick();
 }
 
 function panelLongRuns() {
@@ -723,11 +829,12 @@ function engRender() {
   $('drvWrap').style.display = ['driver', 'laps'].includes(tab) ? '' : 'none';
 
   if (!n) { $('engBody').innerHTML = '<p class="note">Waiting for timing data…</p>'; return; }
-  const body = tab === 'driver' ? panelDriver(n) : tab === 'battles' ? panelBattles() : tab === 'knockout' ? panelKnockout() : tab === 'proj' ? panelProjected()
+  const body = tab === 'driver' ? panelDriver(n) : tab === 'battles' ? panelBattles() : tab === 'knockout' ? panelKnockout() : tab === 'proj' ? null
     : tab === 'longruns' ? panelLongRuns() : tab === 'strategy' ? panelStrategy() : panelLaps(n);
   const recorded = Object.values(hist.laps).reduce((a, l) => a + l.length, 0);
   $('engInfo').textContent = `${recorded} laps recorded`;
-  if ($('engBody').dataset.html !== body) { $('engBody').innerHTML = body; $('engBody').dataset.html = body; }
+  if (tab === 'proj') projMount($('engBody'));
+  else if ($('engBody').dataset.html !== body) { $('engBody').innerHTML = body; $('engBody').dataset.html = body; }
 }
 
 $('engTabs').addEventListener('click', e => {
