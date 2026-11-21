@@ -213,7 +213,7 @@ async function circuit(key, year) {
     const r = await fetch(`https://api.multiviewer.app/api/v1/circuits/${key}/${year}`, { headers: { 'User-Agent': 'pitwall-live-timing' } });
     if (!r.ok) throw new Error(`circuit ${r.status}`);
     const d = await r.json();
-    circuits.set(id, { x: d.x, y: d.y, rotation: d.rotation, corners: d.corners, name: d.circuitName, pitLoss: d.pitLoss });
+    circuits.set(id, { x: d.x, y: d.y, rotation: d.rotation, corners: d.corners, name: d.circuitName, pitLoss: d.pitLoss, marshalSectors: d.marshalSectors });
   }
   return circuits.get(id);
 }

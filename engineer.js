@@ -248,6 +248,7 @@ es.addEventListener('lap', e => {
   if (!snaps.length || !rec?.time || rec.pit || (rec.ts || '1') !== '1') return;
   const best = bestLap(n);
   if (best && rec.time > best * 1.03) return; // not a push lap
+  if (flagDone[n]?.hit) return; // lifted for a yellow flag
   const m = loadModel(), id = `${hist.key}:${n}:${rec.lap}:${rec.at}`;
   if (m.used[id]) return;
   m.used[id] = 1; m.laps++;
@@ -279,7 +280,9 @@ function lapInputs(n) {
   const pb = pbSectors(n);
   let doneT = 0, donePb = 0;
   for (let i = 0; i < done; i++) { doneT += cur[i]; donePb += pb[i] ?? cur[i]; }
-  const out = { done, cur, doneT, delta: doneT - donePb, frac: inSegs.length ? (last + 1) / inSegs.length : 0, segDone: lit.length, segTotal: inSegs.length };
+  const segCounts = [0, 1, 2].map(i => segsOf(i).length), segAll = segCounts.reduce((a, b) => a + b, 0);
+  const lapFrac = segAll ? (segCounts.slice(0, done).reduce((a, b) => a + b, 0) + last + 1) / segAll : null;
+  const out = { done, cur, doneT, lapFrac, delta: doneT - donePb, frac: inSegs.length ? (last + 1) / inSegs.length : 0, segDone: lit.length, segTotal: inSegs.length };
   if (pb.some(v => v == null)) return out;
 
   // Not pushing? Only in practice and qualifying, where not every lap is a flying lap.
@@ -297,7 +300,7 @@ function lapInputs(n) {
 function liveLap(n) {
   const p = lapInputs(n);
   if (!p) return null;
-  const base = { done: p.done, cur: p.cur, delta: p.delta, segDone: p.segDone, segTotal: p.segTotal };
+  const base = { done: p.done, cur: p.cur, delta: p.delta, segDone: p.segDone, segTotal: p.segTotal, lapFrac: p.lapFrac };
   if (p.slow) return { ...base, projected: null, slow: true };
   if (!p.f) return { ...base, projected: null };
   const th = theta();
@@ -553,6 +556,71 @@ function panelKnockout() {
 }
 
 // Every car out on track, with the lap time it is heading for.
+// ---------- Flags and deleted laps ----------
+// Race control names yellow flags by marshal sector. The circuit data says where each marshal
+// sector starts around the lap, so a yellow can be placed ahead of, or on top of, each car.
+let flagCache = { key: '' }, trackTotalCache = { c: null, v: 0 };
+function trackTotal() {
+  if (trackTotalCache.c === circuitInfo) return trackTotalCache.v;
+  const x = circuitInfo?.x || [], y = circuitInfo?.y || [];
+  let t = 0;
+  for (let i = 0; i < x.length; i++) { const j = (i + 1) % x.length; t += Math.hypot(x[j] - x[i], y[j] - y[i]); }
+  trackTotalCache = { c: circuitInfo, v: t };
+  return t;
+}
+function flagState() {
+  const msgs = arr(state.RaceControlMessages?.Messages);
+  const key = `${state.SessionInfo?.Key}:${msgs.length}:${circuitInfo ? 1 : 0}`;
+  if (flagCache.key === key) return flagCache;
+  const active = {}, deleted = {};
+  for (const m of msgs) {
+    if (m.Category === 'Flag' && m.Scope === 'Sector' && m.Sector != null) {
+      if (m.Flag === 'CLEAR') delete active[m.Sector];
+      else if (/YELLOW/.test(m.Flag || '')) active[m.Sector] = m.Flag === 'DOUBLE YELLOW' ? 2 : 1;
+    } else if (m.Category === 'Flag' && m.Scope === 'Track' && (m.Flag === 'GREEN' || m.Flag === 'CLEAR')) {
+      for (const k in active) delete active[k];
+    }
+    const d = /^CAR (\d+) \(\w+\) (?:LAP|TIME [\d:.]+) DELETED\b.*?\bLAP (\d+)/.exec(m.Message || '');
+    if (d) (deleted[d[1]] ??= new Set()).add(Number(d[2]));
+  }
+  // Each active yellow as a stretch of the lap, 0 to 1.
+  const ms = arr(circuitInfo?.marshalSectors).slice().sort((a, b) => a.number - b.number), total = trackTotal();
+  const zones = [];
+  for (const [sec, level] of Object.entries(active)) {
+    const i = ms.findIndex(s => s.number === Number(sec));
+    if (i < 0 || !total) { zones.push({ level, a: null, b: null }); continue; }
+    zones.push({ level, a: ms[i].length / total, b: i + 1 < ms.length ? ms[i + 1].length / total : 1 });
+  }
+  return (flagCache = { key, zones, deleted });
+}
+// What flags do to a lap in progress: a multiplier on its chance, and a short label.
+const flagNow = {}, flagDone = {};
+function flagRisk(n, lv) {
+  const fs = flagState();
+  const lapNo = (Number(L_()[n]?.NumberOfLaps) || 0) + 1;
+  if (fs.deleted[n]?.has(lapNo)) return { mult: 0, label: 'lap deleted', cls: 'r' };
+  const ts = state.TrackStatus?.Status || '1';
+  if (ts === '5') return { mult: 0, label: 'red flag', cls: 'r' };
+  if (ts === '4' || ts === '6' || ts === '7') return { mult: 0.02, label: 'safety car', cls: 'y' };
+  const st = (flagNow[n] ??= { hit: 0 });
+  let ahead = 0, near = 0;
+  // Sector yellows only count while the track status itself says yellow, so one that race
+  // control never cleared in the messages cannot linger.
+  for (const z of ts === '2' ? fs.zones : []) {
+    if (z.a == null || lv.lapFrac == null) { ahead = Math.max(ahead, z.level); continue; } // no map: assume it matters
+    // The position moves in steps (one per bar), and the car is really up to a step further on.
+    // So a zone counts as driven through if it overlaps anything from the last known position
+    // to one step past the current one.
+    if (z.a < lv.lapFrac + 0.05 && z.b > (st.prev ?? lv.lapFrac)) st.hit = Math.max(st.hit, z.level);
+    else if (z.a >= lv.lapFrac) { ahead = Math.max(ahead, z.level); if (z.a - lv.lapFrac < 0.25) near = Math.max(near, z.level); }
+  }
+  if (lv.lapFrac != null) st.prev = lv.lapFrac;
+  if (st.hit) return { mult: st.hit === 2 ? 0.03 : 0.08, label: 'drove through yellow', cls: 'y' };
+  if (near) return { mult: near === 2 ? 0.1 : 0.25, label: 'yellow just ahead', cls: 'y' };
+  if (ahead) return { mult: ahead === 2 ? 0.4 : 0.6, label: 'yellow ahead', cls: 'y' };
+  return { mult: 1, label: '', cls: '' };
+}
+
 // ---------- Projected tab (animated) ----------
 // How unsure a projection is, in seconds. Errors grow with how much of the lap is left;
 // the size per second of lap left is learned along with the model (see addSample).
@@ -701,6 +769,8 @@ function projMount(el) {
   // Chance of the fastest lap, from how far off each projection usually is at that point in a lap.
   const live = cars.filter(c => c.lv?.projected).map(c => ({ n: c.n, p: c.lv.projected, s: projSigma(c.lv) }));
   const chance = fastestChances(live, f?.t);
+  const risk = {};
+  for (const c of cars) if (c.lv?.projected) { risk[c.n] = flagRisk(c.n, c.lv); chance[c.n] = (chance[c.n] ?? 0) * risk[c.n].mult; }
 
   cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
   const secCell = (v, pb, i, cur) => {
@@ -729,7 +799,7 @@ function projMount(el) {
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
+    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
   });
 
   // Build the frame once; after that only rows and notes change.
@@ -780,10 +850,11 @@ function projMount(el) {
 
 // ---------- Scorecard: how good the projections and chances really are ----------
 // At the end of S1 and of S2 the site notes each lap's projection and fastest-lap chance.
-// When the lap is done it checks the projection against the real time, and a minute later
-// (so laps that were running at the same time can finish) whether it ended up the fastest.
+// When the lap is done it checks the projection against the real time, and two minutes later
+// (so laps running at the same time can finish, and deleted laps are announced) whether it
+// ended up the fastest.
 // Saved per race weekend in this browser.
-const SCORE_WAIT = 60 * 1000;
+const SCORE_WAIT = 120 * 1000;
 const scoreKey = () => `pitwall-score-v1-${state.SessionInfo?.Meeting?.Key ?? 'x'}`;
 let score = null;
 function loadScore() {
@@ -804,7 +875,7 @@ const predNow = {}, predDone = {};
 es.addEventListener('feed', e => {
   const [topic, data] = e.detail;
   if (topic !== 'TimingData' || !data?.Lines) return;
-  for (const n of Object.keys(data.Lines)) if (data.Lines[n]?.LastLapTime?.Value) { predDone[n] = predNow[n]; predNow[n] = {}; }
+  for (const n of Object.keys(data.Lines)) if (data.Lines[n]?.LastLapTime?.Value) { predDone[n] = predNow[n]; predNow[n] = {}; flagDone[n] = flagNow[n]; flagNow[n] = null; }
 });
 setInterval(() => {
   if (!state.TimingData?.Lines || !window.sessionFastest) return;
@@ -818,9 +889,10 @@ setInterval(() => {
   const ch = fastestChances(live, window.sessionFastest.t);
   for (const c of live) {
     const st = c.lv.done; // 1 = just finished S1, 2 = just finished S2
-    if (st < 1) continue;
+    if (st < 1) { flagRisk(c.n, c.lv); continue; }
     const p = (predNow[c.n] ??= {});
-    if (!p[st]) p[st] = { proj: c.p, sig: c.s, raw: ch[c.n] ?? 0, ch: calibrate(ch[c.n] ?? 0) };
+    const raw = (ch[c.n] ?? 0) * flagRisk(c.n, c.lv).mult;
+    if (!p[st]) p[st] = { proj: c.p, sig: c.s, raw, ch: calibrate(raw) };
   }
 }, 500);
 es.addEventListener('lap', e => {
