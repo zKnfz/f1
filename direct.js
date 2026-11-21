@@ -141,6 +141,7 @@ function startDirect(emit) {
       lap: Number(line.NumberOfLaps) || null,
       raw, time: lapSecs(raw),
       s: arr(line.Sectors).map(x => lapSecs(x?.Value || x?.PreviousValue)),
+      v: ['I1', 'I2', 'FL', 'ST'].map(k => Number(line.Speeds?.[k]?.Value) || null), // speed traps
       c: stint.Compound || null, age: Number(stint.TotalLaps) || 0, stint: stints.length,
       pos: Number(line.Position) || null,
       gap: line.GapToLeader ?? null, int: line.IntervalToPositionAhead?.Value ?? null,

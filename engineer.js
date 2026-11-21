@@ -84,13 +84,63 @@ es.addEventListener('feed', e => {
 });
 es.addEventListener('full', () => { for (const k in lapTrack) delete lapTrack[k]; });
 
+// Speed at the first intermediate this lap, tracked the same way, to spot laps where a
+// driver is not pushing before any sector time is in.
+const i1Track = {};
+es.addEventListener('feed', e => {
+  const [topic, data] = e.detail;
+  if (topic !== 'TimingData' || !data?.Lines) return;
+  for (const [n, u] of Object.entries(data.Lines)) {
+    if (u?.LastLapTime?.Value) i1Track[n] = null;
+    const v = Number(u?.Speeds?.I1?.Value);
+    if (v) i1Track[n] = v;
+  }
+});
+
 // The lap in progress, projected from sector times and the coloured mini-sector bars.
 // Purple and green bars mean matching or beating their best there, yellow means slower.
-// The rest of the lap is assumed to go at the pace of the lap so far.
-// Tuned on real laps from the 2026 Las Vegas FP3: about 0.6s average error in S1,
-// 0.4s in S2 and 0.3s in S3, with no lean towards too fast or too slow.
+// Tuned on recorded laps (2026 São Paulo race, Las Vegas FP3):
+//  - Drivers rarely match their best sectors, so the rest of the lap is set a little slower
+//    than their best (PACE_BASE).
+//  - Being slow so far only partly carries into the rest of the lap (PACE_CARRY).
+//  - Each driver's own recent laps nudge that, since some get closer to their best than others.
+// Average error on push laps: about 0.3s after S1 and 0.1 to 0.3s after S2.
 const SEG_PURPLE = 2051, SEG_GREEN = 2049, SEG_YELLOW = 2048, SEG_PIT = 2064;
-const YELLOW_COST = 0.006, PACE_WEIGHT = 0.75;
+const YELLOW_COST = 0.006;
+const MODEL = { race: { base: 0.0075, carry: 0.2 }, other: { base: 0.004, carry: 0.12 } };
+// Beyond these, a practice or qualifying lap is a cool-down or an aborted lap.
+const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
+
+// How much slower than the model each driver's recent push laps were (shrunk towards 0).
+let driverOffCache = { key: '', at: 0, v: {} };
+function driverOffset(n) {
+  const nowKey = hist.key + ':' + Object.values(hist.laps).reduce((a, l) => a + l.length, 0);
+  if (driverOffCache.key !== nowKey) {
+    const m = MODEL[sessionKind() === 'race' ? 'race' : 'other'], v = {};
+    for (const [d, laps] of Object.entries(hist.laps)) {
+      let pb = [null, null, null], best = null; const res = [];
+      for (const r of laps) {
+        const sc = r.s || [];
+        const ok = sc.length === 3 && sc.every(x => x > 0) && !r.pit && (r.ts || '1') === '1';
+        if (!ok) continue;
+        if (pb.every(Boolean) && best && r.time < best * 1.03) {
+          for (const st of [1, 2]) {
+            const x = sc.slice(0, st).reduce((a, b) => a + b, 0) / pb.slice(0, st).reduce((a, b) => a + b, 0) - 1;
+            const y = sc.slice(st).reduce((a, b) => a + b, 0) / pb.slice(st).reduce((a, b) => a + b, 0) - 1;
+            res.push(y - (m.base + m.carry * x));
+          }
+        }
+        pb = pb.map((p, i) => (p == null || sc[i] < p ? sc[i] : p));
+        best = best == null || r.time < best ? r.time : best;
+      }
+      const recent = res.slice(-12);
+      v[d] = recent.length ? Math.max(-0.01, Math.min(0.02, recent.reduce((a, b) => a + b, 0) / (recent.length + 6))) : 0;
+    }
+    driverOffCache = { key: nowKey, v };
+  }
+  return driverOffCache.v[n] || 0;
+}
+
 function liveLap(n) {
   const secs = arr(L_()[n]?.Sectors);
   const raw = secs.map(s => lapSecs(s?.Value));
@@ -113,24 +163,37 @@ function liveLap(n) {
   if (done === 0 && !lit.length) return null;
   if ([0, 1, 2].slice(0, done + 1).flatMap(segsOf).includes(SEG_PIT)) return null; // out lap
   const pb = pbSectors(n);
-  let doneT = 0, donePb = 0, nDone = 0;
-  for (let i = 0; i < done; i++) { doneT += cur[i]; donePb += pb[i] ?? cur[i]; nDone += segsOf(i).filter(Boolean).length || 1; }
+  let doneT = 0, donePb = 0;
+  for (let i = 0; i < done; i++) { doneT += cur[i]; donePb += pb[i] ?? cur[i]; }
   const delta = doneT - donePb;
-  if (pb.some(v => v == null)) return { done, cur, delta, projected: null, segDone: lit.length };
+  const base = { done, cur, delta, segDone: lit.length, segTotal: inSegs.length };
+  if (pb.some(v => v == null)) return { ...base, projected: null };
 
+  const race = sessionKind() === 'race';
+  const m = MODEL[race ? 'race' : 'other'];
+  // Pace so far: finished sectors, plus the bars lit in this sector.
   const segR = v => v === SEG_PURPLE ? 1 - YELLOW_COST / 3 : v === SEG_GREEN ? 1 : v === SEG_YELLOW ? 1 + YELLOW_COST : null;
   const litR = lit.map(segR).filter(v => v != null);
   const curR = litR.length ? litR.reduce((a, b) => a + b, 0) / litR.length : null;
-  let w = 0, sum = 0;
-  if (done) { sum += (doneT / donePb) * nDone; w += nDone; }
-  if (curR != null) { sum += curR * litR.length; w += litR.length; }
-  const soften = x => 1 + (x - 1) * PACE_WEIGHT;
-  const r = Math.min(1.15, Math.max(0.98, soften(w ? sum / w : 1)));
   const frac = inSegs.length ? (last + 1) / inSegs.length : 0;
-  let projected = doneT + pb[done] * (curR != null ? frac * soften(curR) + (1 - frac) * r : r);
-  for (let i = done + 1; i < 3; i++) projected += pb[i] * r;
-  return { done, cur, delta, projected, segDone: lit.length, segTotal: inSegs.length, pace: r };
+  const partPb = curR != null ? pb[done] * frac : 0;
+  const soFarT = doneT + (curR != null ? partPb * curR : 0), soFarPb = donePb + partPb;
+  const x = soFarPb ? soFarT / soFarPb - 1 : 0;
+
+  // Not pushing? Only in practice and qualifying, where every lap is not a flying lap.
+  if (!race) {
+    const bestI1 = Number(state.TimingStats?.Lines?.[n]?.BestSpeeds?.I1?.Value);
+    const i1 = i1Track[n];
+    if ((done && delta / donePb > SLOW_AFTER[done - 1]) || (i1 && bestI1 && i1 < bestI1 * SLOW_I1))
+      return { ...base, projected: null, slow: true };
+  }
+
+  const rRest = 1 + m.base + m.carry * x + driverOffset(n);
+  let projected = soFarT + (pb[done] - partPb) * rRest;
+  for (let i = done + 1; i < 3; i++) projected += pb[i] * rRest;
+  return { ...base, projected, pace: rRest };
 }
+
 // Compare a lap in progress with the fastest lap of the session.
 function flRows(n, live) {
   const f = window.sessionFastest;
@@ -264,7 +327,7 @@ function panelDriver(n) {
   if (live) {
     liveBody = kv([...live.cur.map((v, i) => secRow(v, i, 'on track')),
       ['Delta to best sectors', `<span class="${live.delta <= 0 ? 'c-green' : 'c-red'}">${signed(live.delta)}</span>`],
-      ['Projected lap', live.projected ? `<b>${live.done === 0 ? '≈' : ''}${fmtLapT(live.projected)}</b>${live.done === 0 ? ' <span class="dimt">rough until S1 is done</span>' : ''}` : '–'],
+      ['Projected lap', live.slow ? '<span class="dimt">slow lap · not pushing</span>' : live.projected ? `<b>${live.done === 0 ? '≈' : ''}${fmtLapT(live.projected)}</b>${live.done === 0 ? ' <span class="dimt">rough until S1 is done</span>' : ''}` : '–'],
       ...flRows(n, live)]);
   } else if (lastSecs) {
     const total = lastSecs.reduce((a, b) => a + b, 0);
@@ -399,7 +462,7 @@ function panelProjected() {
     const cur = lv?.cur || [null, null, null];
     const pNow = race ? null : posNow(n);
     const bestCell = `<td class="mono t pjbest">${best ? fmtLapT(best) : '<span class="dimt">no time</span>'}</td>`;
-    let tail = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
+    let tail = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${lv?.slow ? 'slow lap · not pushing' : L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
     if (lv?.projected) {
       const p = lv.projected, beatFL = f && p < f.t;
       const dBest = best ? p - best : null;
@@ -440,7 +503,7 @@ function panelProjected() {
     }).join('');
     board = `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et">${board}</table></div>`;
   }
-  return `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector: yellow bars make it slower, green and purple keep it on pace, and the rest of the lap is assumed to go at the pace so far. ≈ means rough: before sector 1 is done it can be a second or two out. Green sector times beat their best, yellow ones don't.</p>
+  return `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector: yellow bars make it slower, green and purple keep it on pace. The rest of the lap is based on their best sectors, how this lap is going, and how close each driver usually gets to their best. ≈ means rough: before sector 1 is done it can be a second or two out. Green sector times beat their best, yellow ones don't.</p>
     <div class="${race ? '' : 'pjgrid'}"><div>${table}</div>${board}</div>`;
 }
 
