@@ -43,6 +43,10 @@ jobs:
         if: steps.mode.outputs.run != 'none'
         run: npm install --no-save --no-package-lock playwright-core
 
+      - name: Check how the F1 feed answers from here
+        if: steps.mode.outputs.run == 'test'
+        run: node tools/diagnose.mjs
+
       - name: Test the recorder
         if: steps.mode.outputs.run == 'test'
         run: node tools/record.mjs --test
