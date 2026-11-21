@@ -76,6 +76,22 @@ function liveLap(n) {
   }
   return { done, cur, delta, projected: ok ? projected : null };
 }
+// Compare a lap in progress with the fastest lap of the session.
+function flRows(n, live) {
+  const f = window.sessionFastest;
+  if (!f || !live?.projected) return [];
+  const d = live.projected - f.t;
+  const left = live.cur.map((v, i) => v == null ? 'S' + (i + 1) : null).filter(Boolean).join(' + ');
+  const who = f.n === n ? 'their own' : (state.DriverList?.[f.n]?.Tla || '#' + f.n) + "'s";
+  const verdict = d < 0
+    ? `<b class="c-purple">⚡ On for the fastest lap (${signed(d)})</b>`
+    : `<span class="${d < 0.3 ? 'c-yellow' : 'dimt'}">No, ${fmt3(d)}s too slow${left ? ` · must find it in ${left}` : ''}</span>`;
+  return [
+    ['Fastest lap', `${fmtLapT(f.t)} <span class="dimt">${esc(who)}</span>`],
+    ['Beat it?', verdict],
+    ...(left ? [['', `<span class="dimt">Assumes they match their best ${esc(left)}.</span>`]] : []),
+  ];
+}
 function clean(r) { return r.time && !r.pit && (r.ts || '1') === '1'; }
 function slope(xs, ys) {
   const n = xs.length; if (n < 3) return null;
@@ -176,7 +192,8 @@ function panelDriver(n) {
   if (live) {
     liveBody = kv([...live.cur.map((v, i) => secRow(v, i, 'on track')),
       ['Delta to best sectors', `<span class="${live.delta <= 0 ? 'c-green' : 'c-red'}">${signed(live.delta)}</span>`],
-      ['Projected lap', live.projected ? `<b>${fmtLapT(live.projected)}</b>` : '–']]);
+      ['Projected lap', live.projected ? `<b>${fmtLapT(live.projected)}</b>` : '–'],
+      ...flRows(n, live)]);
   } else if (lastSecs) {
     const total = lastSecs.reduce((a, b) => a + b, 0);
     const dBest = pb.every(v => v != null) ? total - pb.reduce((a, b) => a + b, 0) : null;
