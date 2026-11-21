@@ -815,6 +815,99 @@ function keyedRows(tbody, items) {
 //   · a lap in progress (its projection and usual error),
 //   · or, if they are likely to run again, a lap near the sum of their best sectors.
 const POLE_RUNS = 3000;
+// How a push lap compares with the sum of the driver's best sectors going into it, learned
+// from this session's recent laps. Below 1 means the track is getting quicker run to run.
+const RUN_PRIOR = { m: 1.0015, s: 0.0035, n: 5 };
+let runPaceMemo = { id: null, v: null };
+function runPace() {
+  const id = `${hist.key}:${Object.values(hist.laps || {}).reduce((a, l) => a + l.length, 0)}`;
+  if (runPaceMemo.id === id) return runPaceMemo.v;
+  const got = [];
+  for (const laps of Object.values(hist.laps || {})) {
+    let pb = [null, null, null];
+    for (const r of laps) {
+      const sc = r.s || [];
+      if (sc.length !== 3 || !sc.every(x => x > 0)) continue;
+      if (pb.every(Boolean) && r.time && !r.pit && (r.ts || '1') === '1') {
+        const k = r.time / pb.reduce((a, b) => a + b, 0);
+        if (k > 0.985 && k < 1.02) got.push({ k, at: r.at || 0 });
+      }
+      pb = pb.map((p, i) => (p == null || sc[i] < p ? sc[i] : p));
+    }
+  }
+  const ks = got.sort((a, b) => a.at - b.at).slice(-20).map(x => x.k);
+  const P = RUN_PRIOR, n = ks.length;
+  const m = (ks.reduce((a, b) => a + b, 0) + P.m * P.n) / (n + P.n);
+  const v = (ks.reduce((a, k) => a + (k - m) ** 2, 0) + P.s ** 2 * P.n) / (n + P.n);
+  const out = { m, s: Math.min(0.008, Math.max(0.002, Math.sqrt(v))), n };
+  runPaceMemo = { id, v: out };
+  return out;
+}
+// What the fitted tyres cost against a new set of softs. Fixed starting values, not learned.
+function tyreCost(n) {
+  const st = arr(state.TimingAppData?.Lines?.[n]?.Stints).at(-1) || {};
+  const c = String(st.Compound || '').toUpperCase(), used = st.New === 'false' || st.New === false || Number(st.StartLaps) >= 2;
+  const step = c === 'MEDIUM' ? 0.005 : c === 'HARD' ? 0.01 : 0;
+  return { add: step + (used ? 0.0025 : 0), label: [used ? 'used' : '', step ? c.toLowerCase() + 's' : (used ? 'tyres' : '')].filter(Boolean).join(' ') };
+}
+
+// ---------- Pole call track record ----------
+// Every call is logged at fixed moments of each qualifying part and scored once the part is
+// over, so the chances can be checked against what happened. Kept across weekends.
+const POLE_LOG = 'pitwall-pole-v1';
+const POLE_CPS = [['start', 'at the start'], ['5min', '5 min left'], ['2min', '2 min left'], ['flag', 'at the flag']];
+let poleLog = null;
+function loadPoleLog() {
+  if (poleLog) return poleLog;
+  try { poleLog = JSON.parse(localStorage.getItem(POLE_LOG)); } catch {}
+  if (!Array.isArray(poleLog?.laps)) poleLog = { key: POLE_LOG, laps: [] };
+  sharedAdopt(POLE_LOG, () => poleLog.laps.length, d => {
+    if (!Array.isArray(d.laps) || d.laps.length <= poleLog.laps.length) return;
+    poleLog = { key: POLE_LOG, laps: d.laps }; savePoleLog(); engDirty = true;
+  });
+  return poleLog;
+}
+function savePoleLog() { try { poleLog.laps = poleLog.laps.slice(-600); localStorage.setItem(POLE_LOG, JSON.stringify(poleLog)); } catch {} }
+setInterval(() => {
+  if (sessionKind() !== 'quali' || !hist.key || !state.TimingData?.Lines) return;
+  const log = loadPoleLog(), part = state.TimingData.SessionPart || 1, status = state.SessionStatus?.Status;
+  let changed = false;
+  // Score earlier calls once their part is over: who really ended it on top?
+  for (const e of log.laps) {
+    if (e.hit !== null || e.k !== hist.key) continue;
+    if (!(e.part < part || (e.part === part && (status === 'Finalised' || status === 'Ends')))) continue;
+    let win = null, t = Infinity;
+    for (const [n, L] of Object.entries(L_())) { const v = lapSecs(arr(L.BestLapTimes)[e.part - 1]?.Value); if (v && v < t) { t = v; win = n; } }
+    if (win) { e.hit = win; changed = true; }
+  }
+  if (status === 'Started') {
+    const c = state.ExtrapolatedClock;
+    let left = c?.Remaining ? parseHms(c.Remaining) / 1000 : null;
+    if (left != null && c.Extrapolating && c.Utc) left -= (Date.now() - Date.parse(c.Utc)) / 1000;
+    const anyTime = Object.values(L_()).some(L => lapSecs(arr(L.BestLapTimes)[part - 1]?.Value));
+    // Only log a moment the page actually saw, never one it opened too late for.
+    const cp = left == null ? null : left <= 3 ? 'flag' : left <= 120 && left > 90 ? '2min' : left <= 300 && left > 240 ? '5min' : !anyTime && left > 300 ? 'start' : null;
+    if (cp && !log.laps.some(e => e.k === hist.key && e.part === part && e.cp === cp)) {
+      const p = poleCall();
+      if (p && !p.settled) {
+        log.laps.push({ k: hist.key, part, cp, at: Date.now(), fav: p.cars[0].n, calls: p.cars.filter(x => x.ch >= 0.02).map(x => ({ n: x.n, ch: +x.ch.toFixed(3) })), hit: null });
+        changed = true;
+      }
+    }
+  }
+  if (changed) { savePoleLog(); engDirty = true; }
+}, 1000);
+function poleRecordHtml() {
+  const done = loadPoleLog().laps.filter(e => e.hit);
+  if (!done.length) return '<p class="note polerec"><b>Track record</b> · none yet. Each call is logged at the start, with 5 and 2 minutes left and at the flag, then checked once the part is over.</p>';
+  const favs = POLE_CPS.map(([cp, label]) => { const g = done.filter(e => e.cp === cp); return g.length ? `${label} <b>${g.filter(e => e.fav === e.hit).length} of ${g.length}</b>` : ''; }).filter(Boolean).join(' · ');
+  const all = done.flatMap(e => e.calls.map(c => ({ ch: c.ch, hit: c.n === e.hit })));
+  const bands = [[0.5, 1.01, '50% or more'], [0.25, 0.5, '25–50%'], [0.02, 0.25, 'under 25%']].map(([lo, hi, label]) => {
+    const g = all.filter(x => x.ch >= lo && x.ch < hi);
+    return g.length ? `said ${label}: came true <b>${g.filter(x => x.hit).length} of ${g.length}</b>` : '';
+  }).filter(Boolean).join(' · ');
+  return `<p class="note polerec"><b>Track record</b> · favourite was right: ${favs}.<br>${bands}.${done.length < 12 ? ' Too few calls so far to judge it.' : ''}</p>`;
+}
 function poleCall() {
   const td = state.TimingData || {}, part = td.SessionPart || 1, lines = L_();
   // 'Inactive' is the wait before a part starts: laps are still to come, so give the early estimate.
@@ -846,8 +939,10 @@ function poleCall() {
       if (ideal && w > 0) {
         // A lap still in sector 1 is too early to read, so it counts as a lap to come.
         const started = !!lv?.projected;
-        lap = { m: ideal * 1.0015, s: ideal * 0.0035, w: started ? 0.9 * flagRisk(n, lv).mult : w };
-        why = `${best ? `holding ${fmtLapT(best)}` : 'no time yet'} · ${started ? 'in sector 1, too early to read' : L.InPit ? (best ? 'may run again' : 'yet to run') : 'on track, lap to come'}`;
+        // How laps have compared with best sectors lately, and what this car has fitted.
+        const pace = runPace(), ty = L.InPit ? { add: 0, label: '' } : tyreCost(n);
+        lap = { m: ideal * (pace.m + ty.add), s: ideal * pace.s, w: started ? 0.9 * flagRisk(n, lv).mult : w };
+        why = `${best ? `holding ${fmtLapT(best)}` : 'no time yet'} · ${started ? 'in sector 1, too early to read' : L.InPit ? (best ? 'may run again' : 'yet to run') : 'on track, lap to come'}${ty.label ? ` · ${ty.label}` : ''}`;
         anyGuess = true;
       }
     }
@@ -894,7 +989,7 @@ function poleHtml() {
   return `<div class="ecard pole ${cls}"><h4>${title}</h4>
     <div class="polehead"><span class="polepct mono">${p.settled ? '🏁' : pct(top.ch) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
     <table class="et polet">${rows}</table>
-    <p class="note">${basis}${p.part === 3 ? '' : ' Pole itself is decided in Q3.'} These are chances, not certainties.</p></div>`;
+    <p class="note">${basis}${p.part === 3 ? '' : ' Pole itself is decided in Q3.'} These are chances, not certainties.</p>${poleRecordHtml()}</div>`;
 }
 
 // Time left in the session, shown at the top of the Projected tab and kept ticking.
@@ -932,7 +1027,7 @@ function projMount(el) {
     if (L.InPit || L.Retired || L.Stopped || L.KnockedOut || (fin && (Number(L.Status) & 1024))) return null;
     return { n, L, lv: liveLap(n), pb: pbSectors(n), best: bestLap(n) };
   }).filter(Boolean);
-  const posFor = (n, t) => all.filter(m => m !== n && (bestLap(m) ?? Infinity) < t).length + 1;
+  const posFor = (n, t) => all.filter(m => m !== n && !lines[m]?.KnockedOut && (bestLap(m) ?? Infinity) < t).length + 1; // knocked-out cars keep an old time
   const posNow = n => { const b = bestLap(n); return b ? posFor(n, b) : null; };
 
   // Chance of the fastest lap, from how far off each projection usually is at that point in a lap.
