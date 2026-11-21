@@ -182,6 +182,9 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .pjch .chbar.mid i{background:var(--yellow)} .pjch .chbar.hi i{background:var(--purple)}
 .pjch span{font-size:11px}
 .pjsig{font-size:10px}
+#pjScore{margin-top:12px}
+#pjScore .kv b{font-weight:500;font-size:12px}
+.et.sc{margin-top:8px}
 .et.pj tbody tr,#pjBoard tr{will-change:transform}
 .et.pj tbody tr.pjnew,#pjBoard tr.pjnew{animation:pjIn .4s ease-out}
 @keyframes pjIn{from{opacity:0}to{opacity:1}}
@@ -335,7 +338,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=22"></script>
+<script src="direct.js?v=23"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -829,7 +832,7 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=22"></script>
-<script src="rain.js?v=22"></script>
+<script src="engineer.js?v=23"></script>
+<script src="rain.js?v=23"></script>
 </body>
 </html>

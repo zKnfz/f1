@@ -687,7 +687,7 @@ function projMount(el) {
   if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
     el.innerHTML = `<div id="pjFrame"><div id="pjLearn"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
-      <table class="et wide pj"><thead><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table></div>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
     el.dataset.pjRace = String(race);
     el.dataset.html = '';
@@ -699,6 +699,7 @@ function projMount(el) {
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
   setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session; even 90% misses one time in ten. ≈ means rough: before sector 1 is done it can be a second or two out.`);
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
+  setHtml('pjScore', scoreHtml());
   const pjBody = el.querySelector('#pjBody');
   pjBody.closest('table').style.display = cars.length ? '' : 'none';
   keyedRows(pjBody, rows);
@@ -726,6 +727,94 @@ function projMount(el) {
     keyedRows(board, items);
   }
   twKick();
+}
+
+// ---------- Scorecard: how good the projections and chances really are ----------
+// At the end of S1 and of S2 the site notes each lap's projection and fastest-lap chance.
+// When the lap is done it checks the projection against the real time, and a minute later
+// (so laps that were running at the same time can finish) whether it ended up the fastest.
+// Saved per race weekend in this browser.
+const SCORE_WAIT = 60 * 1000;
+const scoreKey = () => `pitwall-score-v1-${state.SessionInfo?.Meeting?.Key ?? 'x'}`;
+let score = null;
+function loadScore() {
+  const key = scoreKey();
+  if (score?.key === key) return score;
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(key)); } catch {}
+  score = s?.key === key ? s : { key, laps: [] };
+  return score;
+}
+function saveScore() {
+  try {
+    if (score.laps.length > 3000) score.laps = score.laps.slice(-3000);
+    localStorage.setItem(score.key, JSON.stringify(score));
+  } catch {}
+}
+const predNow = {}, predDone = {};
+es.addEventListener('feed', e => {
+  const [topic, data] = e.detail;
+  if (topic !== 'TimingData' || !data?.Lines) return;
+  for (const n of Object.keys(data.Lines)) if (data.Lines[n]?.LastLapTime?.Value) { predDone[n] = predNow[n]; predNow[n] = {}; }
+});
+setInterval(() => {
+  if (!state.TimingData?.Lines || !window.sessionFastest) return;
+  const live = [];
+  for (const n of drivers()) {
+    const L = L_()[n];
+    if (!L || L.InPit || L.Retired || L.Stopped) continue;
+    const lv = liveLap(n);
+    if (lv?.projected) live.push({ n, lv, p: lv.projected, s: projSigma(lv) });
+  }
+  const ch = fastestChances(live, window.sessionFastest.t);
+  for (const c of live) {
+    const st = c.lv.done; // 1 = just finished S1, 2 = just finished S2
+    if (st < 1) continue;
+    const p = (predNow[c.n] ??= {});
+    if (!p[st]) p[st] = { proj: c.p, sig: c.s, ch: ch[c.n] ?? 0 };
+  }
+}, 500);
+es.addEventListener('lap', e => {
+  const [n, rec] = e.detail;
+  const preds = predDone[n]; predDone[n] = null;
+  if (!preds || !rec?.time || rec.pit || (rec.ts || '1') !== '1') return;
+  const stages = Object.entries(preds);
+  if (!stages.length) return;
+  const sessionKey = hist.key, best = bestLap(n);
+  const push = !best || rec.time < best * 1.03;
+  setTimeout(() => {
+    const f = window.sessionFastest;
+    const hit = !!f && f.n === n && Math.abs(f.t - rec.time) < 0.0005;
+    const s = loadScore();
+    for (const [st, p] of stages) s.laps.push({ k: sessionKey, st: +st, err: push ? +(p.proj - rec.time).toFixed(3) : null, ch: +p.ch.toFixed(3), hit, at: Date.now() });
+    saveScore();
+    engDirty = true;
+  }, SCORE_WAIT);
+});
+
+function scoreHtml() {
+  const s = loadScore();
+  if (!s.laps.length) return `<div class="ecard"><h4>Scorecard</h4><p class="note">Nothing checked yet. Once laps finish, this shows how far off the projections were and how often each chance level actually came good.</p></div>`;
+  const mae = a => a.length ? (a.reduce((x, y) => x + Math.abs(y), 0) / a.length).toFixed(2) + 's' : '–';
+  const errLine = laps => {
+    const e1 = laps.filter(l => l.st === 1 && l.err != null).map(l => l.err), e2 = laps.filter(l => l.st === 2 && l.err != null).map(l => l.err);
+    return `off by <b>${mae(e1)}</b> after S1 <span class="dimt">(${e1.length})</span> · <b>${mae(e2)}</b> after S2 <span class="dimt">(${e2.length})</span>`;
+  };
+  const now = s.laps.filter(l => l.k === hist.key);
+  const buckets = [[0, 0.1, 'under 10%'], [0.1, 0.3, '10–30%'], [0.3, 0.5, '30–50%'], [0.5, 0.7, '50–70%'], [0.7, 0.9, '70–90%'], [0.9, 1.01, '90%+']];
+  const rows = buckets.map(([lo, hi, label]) => {
+    const g = s.laps.filter(l => l.ch >= lo && l.ch < hi);
+    if (!g.length) return '';
+    const hits = g.filter(l => l.hit).length, rate = hits / g.length;
+    const said = g.reduce((a, l) => a + l.ch, 0) / g.length;
+    const ok = g.length < 5 ? 'dimt' : Math.abs(rate - said) <= 0.15 ? 'c-green' : 'c-yellow';
+    return `<tr><td>Said ${label}</td><td class="mono t">${hits} of ${g.length}</td><td class="mono t ${ok}">${Math.round(rate * 100)}%</td></tr>`;
+  }).join('');
+  return `<div class="ecard"><h4>Scorecard</h4>
+    <p class="note">Projections checked against real lap times (push laps only), and how often each fastest-lap chance came good. Each lap is checked twice, at the end of S1 and of S2, so counts are checks rather than laps.</p>
+    <div class="kv"><div><span>This session</span><b>${errLine(now)}</b></div><div><span>This weekend</span><b>${errLine(s.laps)}</b></div></div>
+    <table class="et sc"><tr><th>Fastest? said</th><th class="t">Came true</th><th class="t">Hit rate</th></tr>${rows}</table>
+    <p class="note">The chances are trustworthy when the hit rate is close to what it said (green). Grey means too few laps to tell yet.</p></div>`;
 }
 
 function panelLongRuns() {
