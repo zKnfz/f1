@@ -8,7 +8,7 @@
 // Usage: node tools/record.mjs [--wait=40] [--max=120] [--test]
 //   --wait  minutes to wait for the session to start before giving up
 //   --max   minutes to run at most
-//   --test  open the page for a minute, write learned/last-run.json and stop
+//   --test  open the page for a minute, write data/last-run.json and stop
 // Needs playwright-core (npm install --no-save playwright-core) and Google Chrome.
 
 import http from 'node:http';
@@ -88,7 +88,9 @@ async function save(info, note) {
     index.updated = new Date().toISOString();
     await fs.writeFile(path.join(OUT, 'index.json'), JSON.stringify(index, null, 1));
   }
-  await fs.writeFile(path.join(OUT, 'last-run.json'), JSON.stringify({ at: new Date().toISOString(), test: TEST, note, ...info }, null, 1));
+  // A note about this run, kept out of git (data/ is ignored).
+  await fs.mkdir(path.join(ROOT, 'data'), { recursive: true });
+  await fs.writeFile(path.join(ROOT, 'data', 'last-run.json'), JSON.stringify({ at: new Date().toISOString(), test: TEST, note, ...info }, null, 1));
 }
 
 let exitCode = 0;
