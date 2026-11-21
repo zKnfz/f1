@@ -158,6 +158,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .egrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .ecard{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
 .ecard.wide{grid-column:span 2}
+.et tr.selrow td{background:#1c2130}
 @media (max-width:640px){.ecard.wide{grid-column:auto}}
 .ecard h4{margin:0 0 10px;font-size:10px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
 .kv>div{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #20242d;font-size:12px}
@@ -315,7 +316,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=12"></script>
+<script src="direct.js?v=13"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -809,7 +810,7 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=12"></script>
-<script src="rain.js?v=12"></script>
+<script src="engineer.js?v=13"></script>
+<script src="rain.js?v=13"></script>
 </body>
 </html>

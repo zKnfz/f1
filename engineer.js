@@ -92,6 +92,23 @@ function flRows(n, live) {
     ...(left ? [['', `<span class="dimt">Assumes they match their best ${esc(left)}.</span>`]] : []),
   ];
 }
+// Every car partway through a lap, ranked by projected lap against the session's fastest.
+function flWatch(sel) {
+  const f = window.sessionFastest;
+  const cars = drivers().map(n => {
+    const L = L_()[n] || {};
+    if (L.InPit || L.Retired || L.Stopped) return null;
+    const lv = liveLap(n);
+    return lv?.projected ? { n, lv } : null;
+  }).filter(Boolean).sort((a, b) => a.lv.projected - b.lv.projected);
+  const head = f ? `<p class="note">Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(state.DriverList?.[f.n]?.Tla || '')}</p>` : '';
+  if (!cars.length) return head + '<p class="note">No one is partway through a lap right now. Cars show here after their first sector.</p>';
+  return head + `<table class="et"><tr><th></th><th>Done</th><th>Projected</th><th>vs fastest</th></tr>${cars.slice(0, 8).map(({ n, lv }) => {
+    const d = f ? lv.projected - f.t : null;
+    const cls = d != null && d < 0 ? 'c-purple' : d != null && d < 0.3 ? 'c-yellow' : '';
+    return `<tr class="${n === sel ? 'selrow' : ''}"><td><b>${esc(state.DriverList?.[n]?.Tla || n)}</b></td><td class="mono">S${lv.done}</td><td class="mono">${fmtLapT(lv.projected)}</td><td class="mono ${cls}">${d != null && d < 0 ? '⚡ ' : ''}${signed(d)}</td></tr>`;
+  }).join('')}</table>`;
+}
 function clean(r) { return r.time && !r.pit && (r.ts || '1') === '1'; }
 function slope(xs, ys) {
   const n = xs.length; if (n < 3) return null;
@@ -205,6 +222,7 @@ function panelDriver(n) {
     liveBody = `<p class="note">${L.InPit ? 'In the pits.' : 'Shows once the first sector of a lap is done.'}</p>`;
   }
   out.push(card('Live lap', liveBody));
+  out.push(card('Fastest-lap watch', flWatch(n)));
 
   out.push(card('Sectors', `<table class="et"><tr><th></th><th>Best</th><th>Rank</th><th>vs field</th></tr>${[0, 1, 2].map(i => {
     const s = arr(ST.BestSectors)[i];
