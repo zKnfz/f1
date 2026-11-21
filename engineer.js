@@ -16,7 +16,11 @@ const ENG_TABS = {
 const L_ = () => state.TimingData?.Lines || {};
 const fmt3 = x => x == null || !isFinite(x) ? '–' : x.toFixed(3);
 const fmtLapT = s => { if (s == null || !isFinite(s)) return '–'; const m = Math.floor(s / 60); const r = (s - m * 60).toFixed(3).padStart(6, '0'); return m ? `${m}:${r}` : r; };
-const signed = (x, d = 3) => x == null || !isFinite(x) ? '–' : (x > 0 ? '+' : x < 0 ? '−' : '±') + Math.abs(x).toFixed(d);
+const signed = (x, d = 3) => {
+  if (x == null || !isFinite(x)) return '–';
+  if (Math.abs(x) < 0.5 * 10 ** -d) x = 0; // no "−0.000"
+  return (x > 0 ? '+' : x < 0 ? '−' : '±') + Math.abs(x).toFixed(d);
+};
 function engOrder() {
   const lines = L_();
   return drivers().sort((a, b) => (+(lines[a]?.Line ?? 99)) - (+(lines[b]?.Line ?? 99)));
@@ -162,11 +166,27 @@ function panelDriver(n) {
     ['Last lap', esc(L.LastLapTime?.Value || '–')],
   ])));
 
-  const liveBody = live
-    ? kv([...live.cur.map((v, i) => [`Sector ${i + 1}`, v != null ? `${fmt3(v)} <span class="${v - (pb[i] ?? v) <= 0 ? 'c-green' : 'c-red'}">${pb[i] != null ? signed(v - pb[i]) : ''}</span>` : '<span class="dimt">on track</span>']),
+  // Between laps (or in the garage) show the last completed lap instead of a blank card.
+  const prev = arr(L.Sectors).map(x => lapSecs(x?.PreviousValue));
+  const lastSecs = prev.every(v => v != null) ? prev : null;
+  const secRow = (v, i, wait) => [`Sector ${i + 1}`, v != null
+    ? `${fmt3(v)} <span class="${v - (pb[i] ?? v) <= 0 ? 'c-green' : 'c-red'}">${pb[i] != null ? signed(v - pb[i]) : ''}</span>`
+    : `<span class="dimt">${wait}</span>`];
+  let liveBody;
+  if (live) {
+    liveBody = kv([...live.cur.map((v, i) => secRow(v, i, 'on track')),
       ['Delta to best sectors', `<span class="${live.delta <= 0 ? 'c-green' : 'c-red'}">${signed(live.delta)}</span>`],
-      ['Projected lap', live.projected ? fmtLapT(live.projected) : '–']])
-    : `<p class="note">${L.InPit ? 'In the pits.' : 'Shows once the first sector of a lap is done.'}</p>`;
+      ['Projected lap', live.projected ? `<b>${fmtLapT(live.projected)}</b>` : '–']]);
+  } else if (lastSecs) {
+    const total = lastSecs.reduce((a, b) => a + b, 0);
+    const dBest = pb.every(v => v != null) ? total - pb.reduce((a, b) => a + b, 0) : null;
+    liveBody = `<p class="note">${L.InPit ? 'In the pits. Showing their last lap.' : 'New lap started. Showing their last lap until sector 1 is done.'}</p>`
+      + kv([...lastSecs.map((v, i) => secRow(v, i, '')),
+        ['Delta to best sectors', dBest == null ? '–' : `<span class="${dBest <= 0 ? 'c-green' : 'c-red'}">${signed(dBest)}</span>`],
+        ['Last lap', esc(L.LastLapTime?.Value || fmtLapT(total))]]);
+  } else {
+    liveBody = `<p class="note">${L.InPit ? 'In the pits.' : 'Shows once the first sector of a lap is done.'}</p>`;
+  }
   out.push(card('Live lap', liveBody));
 
   out.push(card('Sectors', `<table class="et"><tr><th></th><th>Best</th><th>Rank</th><th>vs field</th></tr>${[0, 1, 2].map(i => {
