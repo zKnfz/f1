@@ -1,7 +1,7 @@
 // Tests the race call on past races (downloaded by tools/fetch-races.mjs).
 // At set points in each race it rebuilds what was known then, asks the race call for its
 // chances, and compares them with the real result.
-// Usage: node tools/race-backtest.mjs [--set=key=value,...] [--quiet]
+// Usage: node tools/race-backtest.mjs [--year=2024,2025] [--set=key=value,...] [--quiet]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,8 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.f
 const CPS = [0, 0.25, 0.5, 0.75, 0.9];
 
 const dir = path.join(ROOT, 'data', 'races');
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort();
+const yearArg = process.argv.find(a => a.startsWith('--year='))?.slice(7);
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && (!yearArg || yearArg.split(',').some(y => f.startsWith(y + '-')))).sort();
 const rows = []; // { cp, market, p, hit }
 const favs = {};
 for (const f of files) {

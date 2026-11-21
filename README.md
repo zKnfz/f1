@@ -67,7 +67,7 @@ pit stops still to make, the chance of a safety car and of retiring, and a margi
 overtake a car on the same strategy. Before the race has its own laps it leans on grid order
 and qualifying pace, which the site saves during qualifying (`pitwall-qpace-<meeting>`).
 
-Its settings were tuned on the 2025 races:
+Its settings were tuned on the 2025 races and checked on 2024 races they had not seen (the same settings came out best for each season alone and both together):
 
 ```
 node tools/fetch-races.mjs 2025      # download lap-by-lap history from the Jolpica API into data/races/

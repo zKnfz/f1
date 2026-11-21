@@ -13,7 +13,8 @@ const combos = keys.reduce((acc, k) => acc.flatMap(c => grid[k].map(v => ({ ...c
 const res = [];
 for (const c of combos) {
   const set = Object.entries(c).map(([k, v]) => `${k}=${v}`).join(',');
-  const out = execFileSync(process.execPath, ['tools/race-backtest.mjs', '--quiet', `--set=${set}`], { encoding: 'utf8' });
+  const year = process.argv.find(a => a.startsWith('--year='));
+  const out = execFileSync(process.execPath, ['tools/race-backtest.mjs', '--quiet', `--set=${set}`, ...(year ? [year] : [])], { encoding: 'utf8' });
   const s = JSON.parse(out.match(/SCORE (.*)/)[1]);
   res.push({ ...c, ll: s.logloss });
   process.stderr.write('.');
