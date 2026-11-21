@@ -832,10 +832,10 @@ function poleCall() {
     const parts = arr(L.BestLapTimes);
     const best = parts.length ? lapSecs(parts[part - 1]?.Value) : bestLap(n), lv = L.InPit ? null : liveLap(n);
     let lap = null, why = best ? `holding ${fmtLapT(best)}` : 'no time yet';
-    if (lv?.projected) {
+    if (lv?.projected && lv.done >= 1) {
       const risk = flagRisk(n, lv);
-      lap = { m: lv.projected, s: projSigma(lv), w: risk.mult * (lv.done ? 1 : 0.9) };
-      why = lv.done ? `on a lap · heading for ${fmtLapT(lv.projected)}` : 'just started a lap';
+      lap = { m: lv.projected, s: projSigma(lv), w: risk.mult };
+      why = `on a lap · heading for ${fmtLapT(lv.projected)}`;
       if (risk.label) why += ` · ${risk.label}`;
       anyLive = true;
     } else if (running) {
@@ -844,8 +844,10 @@ function poleCall() {
       const ideal = !ref.loose && ref.pb.every(Boolean) ? ref.pb.reduce((a, b) => a + b, 0) : null;
       const w = leftS == null ? 0.5 : L.InPit ? (leftS > 240 ? 0.7 : leftS > 110 ? 0.35 : 0) : (leftS > 20 ? 0.8 : 0.5);
       if (ideal && w > 0) {
-        lap = { m: ideal * 1.0015, s: ideal * 0.0035, w };
-        why = `${best ? `holding ${fmtLapT(best)}` : 'no time yet'} · ${L.InPit ? 'may run again' : 'on track, lap to come'}`;
+        // A lap still in sector 1 is too early to read, so it counts as a lap to come.
+        const started = !!lv?.projected;
+        lap = { m: ideal * 1.0015, s: ideal * 0.0035, w: started ? 0.9 * flagRisk(n, lv).mult : w };
+        why = `${best ? `holding ${fmtLapT(best)}` : 'no time yet'} · ${started ? 'in sector 1, too early to read' : L.InPit ? (best ? 'may run again' : 'yet to run') : 'on track, lap to come'}`;
         anyGuess = true;
       }
     }
@@ -939,7 +941,7 @@ function projMount(el) {
   const risk = {};
   for (const c of cars) if (c.lv?.projected) { risk[c.n] = flagRisk(c.n, c.lv); chance[c.n] = (chance[c.n] ?? 0) * risk[c.n].mult; }
 
-  const early = c => (c.lv?.projected && c.lv.done === 0 ? 1 : 0);
+  const early = c => (!c.lv?.projected ? 2 : c.lv.done === 0 ? 1 : 0);
   cars.sort((a, b) => early(a) - early(b) || (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
   const secCell = (v, pb, i, cur, purple) => {
     if (v != null) return `<td class="mono t ${purple ? 'c-purple' : pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
@@ -948,6 +950,13 @@ function projMount(el) {
     return `<td class="mono t dimt${i === 2 ? ' pjs3' : ''}">${later ? '–' : next ? 'on it' : ''}</td>`;
   };
   const span = race ? 3 : 4;
+  // The one lap in progress (sector 1 done) that would go quickest of all: on for pole in Q3,
+  // top of the part in Q1 and Q2, the fastest lap in other sessions.
+  const quali = sessionKind() === 'quali', qPart = state.TimingData?.SessionPart || 1;
+  const prize = quali ? (qPart === 3 ? 'POLE' : 'P1') : 'FASTEST LAP';
+  // In qualifying the last column shows the same figure as the pole card, so the two agree.
+  const poleCh = quali ? Object.fromEntries((poleCall()?.cars || []).map(c => [c.n, c.ch])) : null;
+  const lead = cars.filter(c => c.lv?.projected && c.lv.done >= 1 && c.lv.projected < (f?.t ?? Infinity) && !(risk[c.n]?.mult < 0.5))[0]?.n ?? null;
   // Where the car is on its lap: a bar split at the sector lines, filled as mini-sectors light up.
   const lapCell = (n, L, lv) => {
     const counts = arr(L.Sectors).map(s => arr(s?.Segments).length), total = counts.reduce((a, b) => a + b, 0);
@@ -971,23 +980,24 @@ function projMount(el) {
         const pNew = posFor(n, p), pNow = posNow(n);
         posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt pjstay">stays</span>`;
       }
-      const ch = calibrate(chance[n] ?? 0), pct = Math.round(ch * 100);
+      const ch = poleCh ? (poleCh[n] ?? 0) : calibrate(chance[n] ?? 0), pct = Math.round(ch * 100);
       const chCls = ch >= 0.5 ? 'hi' : ch >= 0.15 ? 'mid' : 'lo';
       tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.loose ? ' rough' : ''}"><b>${lv.loose ? '≈' : ''}${tw('p' + n, p)}</b> <span class="dimt pjsig">±${projSigma(lv).toFixed(1)}</span></td>`
         + `<td class="mono t pjvs ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur, !!arr(L.Sectors)[i]?.OverallFastest)).join('')}${bestCell}${tail}` };
+    const onIt = n === lead ? ` <span class="pjpole">⚡ ON FOR ${prize}</span>` : '';
+    return { k: n, cls: (n === selected ? 'selrow' : '') + (n === lead ? ' pjtop' : ''), html: `<td>${chipD(n)}${onIt}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur, !!arr(L.Sectors)[i]?.OverallFastest)).join('')}${bestCell}${tail}` };
   });
 
   // Build the frame once; after that only rows and notes change.
-  if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
+  if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== `${race}:${prize}`) {
     el.innerHTML = `<div id="pjFrame"><div id="pjClock"></div><div id="pjPole"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
-      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div><div id="pjLearn"></div></div>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the quickest: pole in Q3, top of the part in Q1 and Q2, the fastest lap in other sessions">${quali ? (qPart === 3 ? 'Pole?' : 'P1?') : 'Fastest?'}</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div><div id="pjLearn"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
-    el.dataset.pjRace = String(race);
+    el.dataset.pjRace = `${race}:${prize}`;
     el.dataset.html = '';
   }
   const setHtml = (id, h) => { const x = el.querySelector('#' + id); if (x && x.dataset.h !== h) { x.innerHTML = h; x.dataset.h = h; } };
@@ -995,7 +1005,7 @@ function projMount(el) {
   const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
-  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet. A driver with no proper lap of their own yet is also marked ≈, with a wider ±.`);
+  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. The row marked <b>⚡ ON FOR ${prize}</b> is the lap that would go quickest of all right now. The last column is the chance that lap really ends up quickest, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet. A driver with no proper lap of their own yet is also marked ≈, with a wider ±.`);
   pjClockTick();
   setHtml('pjPole', sessionKind() === 'quali' ? poleHtml() : '');
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');

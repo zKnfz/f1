@@ -182,6 +182,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .pjch .chbar i{display:block;height:100%;border-radius:3px;background:#55607a;transition:width .5s cubic-bezier(.2,.8,.2,1),background .5s}
 .pjch .chbar.mid i{background:var(--yellow)} .pjch .chbar.hi i{background:var(--purple)}
 .pjch span{font-size:11px}
+.pjpole{display:inline-block;margin-left:6px;padding:2px 7px;border-radius:4px;background:var(--purple);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.04em;animation:pjPulse 1.2s ease-in-out infinite}
+@keyframes pjPulse{50%{opacity:.65}}
+.et.pj tr.pjtop td{background:#241538} .et.pj tr.pjtop td:first-child{box-shadow:inset 3px 0 var(--purple)}
+@media (max-width:640px){.pjpole{display:block;margin:2px 0 0;font-size:9px;padding:1px 4px}}
 .pjclock{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;color:var(--muted);font-size:12px}
 .pjclock b{font-size:24px;color:var(--text)} .pjclock b.c-red{color:var(--red)} .pjclock b.c-yellow{color:var(--yellow)} .pjclock b.dimt{color:var(--dim)}
 .ecard.pole{margin-bottom:12px;border-left:3px solid #55607a}
@@ -357,7 +361,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=33"></script>
+<script src="direct.js?v=35"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -851,7 +855,7 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=33"></script>
-<script src="rain.js?v=33"></script>
+<script src="engineer.js?v=35"></script>
+<script src="rain.js?v=35"></script>
 </body>
 </html>
