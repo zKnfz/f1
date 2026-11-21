@@ -344,7 +344,7 @@ function modelInfo() {
 // Compare a lap in progress with the fastest lap of the session.
 function flRows(n, live) {
   const f = window.sessionFastest;
-  if (!f || !live?.projected) return [];
+  if (!f || !live?.projected || live.done < 1) return []; // too early to call before sector 1 is in
   const d = live.projected - f.t;
   const left = live.cur.map((v, i) => v == null ? 'S' + (i + 1) : null).filter(Boolean).join(' + ');
   const who = f.n === n ? 'their own' : (state.DriverList?.[f.n]?.Tla || '#' + f.n) + "'s";
@@ -364,7 +364,7 @@ function flWatch(sel) {
     const L = L_()[n] || {};
     if (L.InPit || L.Retired || L.Stopped) return null;
     const lv = liveLap(n);
-    return lv?.projected ? { n, lv } : null;
+    return lv?.projected && lv.done >= 1 ? { n, lv } : null;
   }).filter(Boolean).sort((a, b) => a.lv.projected - b.lv.projected);
   const head = f ? `<p class="note">Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(state.DriverList?.[f.n]?.Tla || '')}</p>` : '';
   if (!cars.length) return head + '<p class="note">No one is partway through a lap right now. Cars show here after their first sector.</p>';
@@ -807,7 +807,8 @@ function projMount(el) {
   const risk = {};
   for (const c of cars) if (c.lv?.projected) { risk[c.n] = flagRisk(c.n, c.lv); chance[c.n] = (chance[c.n] ?? 0) * risk[c.n].mult; }
 
-  cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
+  const early = c => (c.lv?.projected && c.lv.done === 0 ? 1 : 0);
+  cars.sort((a, b) => early(a) - early(b) || (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0) || a.n - b.n);
   const secCell = (v, pb, i, cur, purple) => {
     if (v != null) return `<td class="mono t ${purple ? 'c-purple' : pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
     const later = cur && cur.slice(i + 1).some(x => x != null);
@@ -827,7 +828,10 @@ function projMount(el) {
     const cur = lv?.cur || [null, null, null];
     const bestCell = `<td class="mono t pjbest">${best ? fmtLapT(best) : '<span class="dimt">no time</span>'}</td>`;
     let tail = `<td class="mono t dimt" colspan="${span}">${lv?.slow ? 'slow lap · not pushing' : L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
-    if (lv?.projected) {
+    if (lv?.projected && lv.done === 0) {
+      // Sector 1 isn't in yet: show a rough time only, and make no call on it.
+      tail = `<td class="mono t rough">≈${tw('p' + n, lv.projected)}</td><td class="mono t dimt" colspan="${span - 1}">too early · wait for S1</td>`;
+    } else if (lv?.projected) {
       const p = lv.projected, beatFL = f && p < f.t;
       const dBest = best ? p - best : null;
       let posTxt = '';
@@ -859,7 +863,7 @@ function projMount(el) {
   const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
-  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. ≈ means rough: before sector 1 is done it can be a second or two out.`);
+  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet.`);
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
   const pjBody = el.querySelector('#pjBody');
@@ -878,7 +882,7 @@ function projMount(el) {
     const entries = all.filter(n => bestLap(n)).map(n => ({ n, t: bestLap(n), live: false }));
     for (const c of cars) {
       const p = c.lv?.projected;
-      if (p && (!c.best || p < c.best)) entries.push({ n: c.n, t: p, live: true, done: c.lv.done });
+      if (p && c.lv.done >= 1 && (!c.best || p < c.best)) entries.push({ n: c.n, t: p, live: true, done: c.lv.done });
     }
     entries.sort((a, b) => a.t - b.t);
     const top = entries.find(e => !e.live)?.t;
