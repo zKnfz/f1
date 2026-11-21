@@ -894,6 +894,30 @@ function poleHtml() {
     <p class="note">${basis}${p.part === 3 ? '' : ' Pole itself is decided in Q3.'} These are chances, not certainties.</p></div>`;
 }
 
+// Time left in the session, shown at the top of the Projected tab and kept ticking.
+function sessionLeftMs() {
+  const c = state.ExtrapolatedClock;
+  if (!c?.Remaining) return null;
+  let ms = parseHms(c.Remaining);
+  if (c.Extrapolating && c.Utc) ms -= Date.now() - Date.parse(c.Utc);
+  return Math.max(0, ms);
+}
+function pjClockTick() {
+  const el = document.getElementById('pjClock');
+  if (!el) return;
+  const ms = sessionLeftMs(), st = state.SessionStatus?.Status;
+  let h = '';
+  if (ms != null) {
+    const t = Math.ceil(ms / 1000), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
+    const what = sessionKind() === 'quali' ? `Q${state.TimingData?.SessionPart || 1}` : 'the session';
+    const run = st === 'Started' && state.ExtrapolatedClock?.Extrapolating;
+    const cls = !run ? 'dimt' : t <= 120 ? 'c-red' : t <= 300 ? 'c-yellow' : '';
+    h = `<div class="pjclock"><span>Time left in ${what}</span><b class="mono ${cls}">${mm}:${ss}</b>${run ? (t <= 120 ? '<span class="dimt">last laps only</span>' : '') : `<span class="dimt">${t === 0 ? 'time is up' : 'clock stopped'}</span>`}</div>`;
+  }
+  if (el.dataset.h !== h) { el.innerHTML = h; el.dataset.h = h; }
+}
+setInterval(pjClockTick, 500);
+
 const lapBarW = {};
 function projMount(el) {
   const lines = L_(), race = sessionKind() === 'race';
@@ -958,7 +982,7 @@ function projMount(el) {
 
   // Build the frame once; after that only rows and notes change.
   if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
-    el.innerHTML = `<div id="pjFrame"><div id="pjPole"></div><p class="note" id="pjNote"></p>
+    el.innerHTML = `<div id="pjFrame"><div id="pjClock"></div><div id="pjPole"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
       <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div><div id="pjLearn"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
@@ -971,6 +995,7 @@ function projMount(el) {
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
   setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. Until a driver finishes sector 1 the time is only a rough guide (≈), so no call is made on that lap yet. A driver with no proper lap of their own yet is also marked ≈, with a wider ±.`);
+  pjClockTick();
   setHtml('pjPole', sessionKind() === 'quali' ? poleHtml() : '');
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
