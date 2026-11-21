@@ -176,6 +176,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .et tr.pjlive td:first-child{box-shadow:inset 3px 0 var(--purple)}
 @media (max-width:900px){.pjgrid{grid-template-columns:minmax(0,1fr)}}
 .et.pj td{white-space:nowrap}
+.et.pj td.rough{opacity:.6}
 @media (max-width:640px){.et.pj .pjbest{display:none} .et.pj{font-size:10.5px} .et.pj td,.et.pj th{padding:5px 3px}}
 .dchip{display:inline-flex;align-items:center;gap:5px;font-weight:700}
 .dchip i{width:3px;height:13px;border-radius:2px}
@@ -322,7 +323,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=16"></script>
+<script src="direct.js?v=18"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -519,7 +520,7 @@ function render(){
     const fin = chequered && (Number(L.Status) & 1024);
     // Mid-lap and on course to beat the fastest lap of the session.
     const lv = !out && !L.InPit && !fin && typeof liveLap==='function' ? liveLap(n) : null;
-    const onFL = lv?.projected && isFinite(fastestBest) && lv.projected < fastestBest;
+    const onFL = lv?.projected && lv.done >= 1 && isFinite(fastestBest) && lv.projected < fastestBest;
     const tag = L.Retired?'OUT':fin?'FIN':L.Stopped?'STOP':L.KnockedOut?'KO':L.InPit?'PIT':L.PitOut?'OUTLAP':onFL?'FL':'';
     if(r.cache.tag!==tag){ r.cache.tag=tag; r.tag.className='tag '+tag; r.tag.textContent=tag==='OUTLAP'?'PIT OUT':tag==='FIN'?'🏁':tag==='FL'?'⚡ FL':tag; r.tag.title=tag==='FL'?'On course to beat the fastest lap':''; r.tag.style.display=tag?'':'none'; }
 
@@ -816,7 +817,7 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=16"></script>
-<script src="rain.js?v=16"></script>
+<script src="engineer.js?v=18"></script>
+<script src="rain.js?v=18"></script>
 </body>
 </html>
