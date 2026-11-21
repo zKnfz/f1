@@ -5,25 +5,42 @@
 #
 #   tools/record-and-share.sh          record if a session is on, then commit and push learned/
 #   tools/record-and-share.sh --test   only check that the recorder can reach the F1 feed
+#
+# Safe to run every 15 minutes from a scheduler: it exits straight away when no session is on,
+# and it will not record the same session twice.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# A scheduler starts with a bare PATH, so find Node (nvm or Homebrew) and git ourselves.
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+if ! command -v node >/dev/null; then
+  newest=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)
+  [ -n "$newest" ] && export PATH="$newest:$PATH"
+fi
+command -v node >/dev/null || { echo "$(date) Node not found"; exit 1; }
 
 [ -d node_modules/playwright-core ] || npm install --no-save --no-package-lock playwright-core
 
 if [ "${1:-}" = "--test" ]; then node tools/record.mjs --test; exit $?; fi
 
 check=$(node tools/session-check.mjs)
-echo "$check"
 case "$check" in *'"record":true'*) ;; *) exit 0 ;; esac
 wait=$(echo "$check" | sed -E 's/.*"wait":([0-9]+).*/\1/')
 max=$(echo "$check" | sed -E 's/.*"max":([0-9]+).*/\1/')
-name=$(echo "$check" | sed -E 's/.*"name":"([^"]*)".*/\1/')
+name="$(echo "$check" | sed -E 's/.*"name":"([^"]*)".*/\1/') $(date -u +%Y)"
 
-node tools/record.mjs --wait="$wait" --max="$max" || true
+mkdir -p data
+if grep -qxF "$name" data/recorded.txt 2>/dev/null; then exit 0; fi
+echo "$(date) Recording: $name (wait ${wait} min, at most ${max} min)"
+
+# Keep the Mac from going to sleep on its own while recording (a closed lid still sleeps it).
+keep=""; command -v caffeinate >/dev/null && keep="caffeinate -i"
+$keep node tools/record.mjs --wait="$wait" --max="$max" || true
+grep -q '"note": "session over"' data/last-run.json 2>/dev/null && echo "$name" >> data/recorded.txt
 
 git add learned
-if git diff --cached --quiet; then echo "Nothing new to share."; exit 0; fi
-git commit -q -m "Recorder: $name"
-git pull -q --rebase
+if git diff --cached --quiet; then echo "$(date) Nothing new to share."; exit 0; fi
+git commit -q -m "Recorder: $name" -- learned
+git pull -q --rebase --autostash
 GIT_TERMINAL_PROMPT=0 git push -q
-echo "Shared what was learned from: $name"
+echo "$(date) Shared what was learned from: $name"
