@@ -7,7 +7,7 @@
 let engTab = {}, engCompare = null, engLastSel;
 
 const ENG_TABS = {
-  race: [['driver', 'Driver'], ['proj', 'Projected'], ['battles', 'Battles'], ['laps', 'Lap times'], ['strategy', 'Strategy']],
+  race: [['call', 'Race call'], ['driver', 'Driver'], ['proj', 'Projected'], ['battles', 'Battles'], ['laps', 'Lap times'], ['strategy', 'Strategy']],
   quali: [['driver', 'Driver'], ['proj', 'Projected'], ['knockout', 'Knockout'], ['laps', 'Lap times']],
   practice: [['driver', 'Driver'], ['proj', 'Projected'], ['longruns', 'Long runs'], ['laps', 'Lap times'], ['strategy', 'Tyres']],
 };
@@ -1283,6 +1283,155 @@ function panelStrategy() {
   }).join('')}</div><p class="note">${total ? `Bars span the full ${total} laps. The line marks the current lap.` : 'Bar length is laps driven on each set.'} Tyre letters: S soft, M medium, H hard, I intermediate, W wet.</p>`;
 }
 
+// ---------- Race call (winner, top 5, top 10) ----------
+// The simulation itself is in racesim.js. This part gathers what the feed knows now,
+// keeps qualifying pace for the start of the race, and keeps a track record.
+const qpaceKey = () => `pitwall-qpace-${state.SessionInfo?.Meeting?.Key ?? 'x'}`;
+let qpace = null;
+setInterval(() => {
+  // During qualifying, keep each driver's best lap for the race call.
+  if (sessionKind() !== 'quali' || !state.TimingData?.Lines) return;
+  const key = qpaceKey(), best = {};
+  for (const [n, L] of Object.entries(L_())) {
+    const t = Math.min(...arr(L.BestLapTimes).map(x => lapSecs(x?.Value)).filter(Boolean), lapSecs(L.BestLapTime?.Value) ?? Infinity);
+    if (isFinite(t)) best[n] = t;
+  }
+  if (!Object.keys(best).length) return;
+  let old = null; try { old = JSON.parse(localStorage.getItem(key)); } catch {}
+  for (const [n, t] of Object.entries(old?.best || {})) if (!(best[n] <= t)) best[n] = t;
+  qpace = { key, laps: Object.keys(best).length, best };
+  try { localStorage.setItem(key, JSON.stringify(qpace)); } catch {}
+}, 10000);
+function qualiPace() {
+  const key = qpaceKey();
+  if (qpace?.key === key) return qpace.best;
+  try { const d = JSON.parse(localStorage.getItem(key)); if (d?.key === key) qpace = d; } catch {}
+  if (qpace?.key !== key) qpace = { key, laps: 0, best: {} };
+  sharedAdopt(key, () => qpace.laps, d => { if (d.key === key && d.laps > qpace.laps) { qpace = d; try { localStorage.setItem(key, JSON.stringify(d)); } catch {} engDirty = true; } });
+  return qpace.best;
+}
+
+function raceInputs() {
+  const lines = L_(), app = state.TimingAppData?.Lines || {}, order = engOrder();
+  const lc = state.LapCount || {}, total = +lc.TotalLaps || 0, cur = +lc.CurrentLap || 0;
+  const status = state.SessionStatus?.Status;
+  const started = cur >= 1 && ['Started', 'Finished', 'Finalised', 'Ends', 'Aborted'].includes(status) && Object.values(lines).some(L => +L.NumberOfLaps >= 1);
+  const ref = refLap(), q = qualiPace(), pl = circuitInfo?.pitLoss || {};
+  const cars = order.map((n, i) => {
+    const L = lines[n] || {}, stints = arr(app[n]?.Stints), st = stints.at(-1) || {};
+    // Clean racing laps: green flag, not in or out of the pits, not the first lap, and not far
+    // off the driver's own usual pace (an in-lap or a moment in traffic).
+    const ok = (hist.laps[n] || []).filter(r => clean(r) && r.lap > 1 && r.age > 1);
+    const med = ok.length ? ok.map(r => r.time).sort((a, b) => a - b)[Math.floor((ok.length - 1) / 2)] : null;
+    const laps = ok.filter(r => r.time < med + 1.5).slice(-12).map(r => ({ time: r.time, age: r.age, stint: r.stint }));
+    const gap = i === 0 ? 0 : gapSecs(L.GapToLeader, ref);
+    return { n, pos: +L.Position || i + 1, gap: started ? (gap ?? i * 1.5) : i * 0.25, out: !!(L.Retired || L.Stopped),
+      compound: String(st.Compound || 'MEDIUM').toUpperCase(), age: +st.TotalLaps || 0, used: stints.map(x => String(x.Compound || '').toUpperCase()), laps, qbest: q[n] };
+  });
+  return { lapsLeft: total ? Math.max(0, total - Math.max(cur, 1) + (started ? 1 : 1)) : 50, total, cur, started, status,
+    sprint: /sprint/i.test(state.SessionInfo?.Name || ''), pitLoss: +pl.normal || 22, scLoss: +pl.sc || 13,
+    scNow: state.TrackStatus?.Status === '4', ref, cars };
+}
+let raceMemo = { id: null, v: null };
+function raceCall() {
+  if (!window.RaceSim || !state.TimingData?.Lines) return null;
+  // Over once the leader has taken the flag on the last lap.
+  const lc = state.LapCount || {}, fin = +lc.CurrentLap >= +lc.TotalLaps && arr(state.RaceControlMessages?.Messages).some(m => m.Flag === 'CHEQUERED');
+  const id = `${hist.key}:${lc.CurrentLap}:${state.TrackStatus?.Status}:${Object.keys(qualiPace()).length}:${Math.floor(Date.now() / 5000)}`;
+  if (raceMemo.id === id) return raceMemo.v;
+  const inp = raceInputs();
+  if (fin) inp.lapsLeft = 0;
+  const b = RaceSim.build(inp), res = RaceSim.run(b);
+  const v = { ...res, inp, fin, byN: Object.fromEntries(b.cars.map(c => [c.n, c])) };
+  raceMemo = { id, v };
+  return v;
+}
+
+const RACE_LOG = 'pitwall-race-v1';
+const RACE_CPS = [['start', 0, 'lap 1'], ['q1', 0.25, 'quarter distance'], ['half', 0.5, 'half distance'], ['q3', 0.75, 'three-quarter distance'], ['late', 0.9, '90% distance']];
+let raceLog = null;
+function loadRaceLog() {
+  if (raceLog) return raceLog;
+  try { raceLog = JSON.parse(localStorage.getItem(RACE_LOG)); } catch {}
+  if (!Array.isArray(raceLog?.laps)) raceLog = { key: RACE_LOG, laps: [] };
+  sharedAdopt(RACE_LOG, () => raceLog.laps.length, d => {
+    if (!Array.isArray(d.laps) || d.laps.length <= raceLog.laps.length) return;
+    raceLog = { key: RACE_LOG, laps: d.laps }; saveRaceLog(); engDirty = true;
+  });
+  return raceLog;
+}
+function saveRaceLog() { try { raceLog.laps = raceLog.laps.slice(-300); localStorage.setItem(RACE_LOG, JSON.stringify(raceLog)); } catch {} }
+setInterval(() => {
+  if (sessionKind() !== 'race' || !hist.key || !state.LapCount) return;
+  const log = loadRaceLog(), status = state.SessionStatus?.Status;
+  let changed = false;
+  if (status === 'Finalised' || status === 'Ends') {
+    const pos = Object.fromEntries(Object.entries(L_()).map(([n, L]) => [n, +L.Position || 99]));
+    for (const e of log.laps) if (e.k === hist.key && !e.fin) { e.fin = pos; changed = true; }
+  } else if (status === 'Started') {
+    const { CurrentLap: cur, TotalLaps: tot } = state.LapCount;
+    const f = (+cur - 1) / (+tot || 1);
+    // Only a moment the page actually saw: within a couple of laps of it.
+    const cp = RACE_CPS.find(([, at]) => f >= at && f < at + 2.5 / (+tot || 50))?.[0];
+    if (cp && +cur >= 1 && !log.laps.some(e => e.k === hist.key && e.cp === cp)) {
+      const r = raceCall();
+      if (r && !r.settled) {
+        log.laps.push({ k: hist.key, cp, at: Date.now(), p: Object.fromEntries(r.cars.map(c => [c.n, [+c.win.toFixed(3), +c.top5.toFixed(3), +c.top10.toFixed(3)]])), fin: null });
+        changed = true;
+      }
+    }
+  }
+  if (changed) { saveRaceLog(); engDirty = true; }
+}, 2000);
+function raceRecordHtml() {
+  const done = loadRaceLog().laps.filter(e => e.fin);
+  if (!done.length) return '<p class="note polerec"><b>Track record</b> · none yet. Each call is logged at lap 1, a quarter, half, three quarters and 90% of the race, then checked against the result.</p>';
+  const fav = RACE_CPS.map(([cp, , label]) => {
+    const g = done.filter(e => e.cp === cp);
+    if (!g.length) return '';
+    const right = g.filter(e => { const top = Object.entries(e.p).sort((a, b) => b[1][0] - a[1][0])[0]?.[0]; return e.fin[top] === 1; }).length;
+    return `${label} <b>${right} of ${g.length}</b>`;
+  }).filter(Boolean).join(' · ');
+  const band = (i, cut) => {
+    const all = done.flatMap(e => Object.entries(e.p).map(([n, p]) => ({ p: p[i], hit: (e.fin[n] ?? 99) <= cut })));
+    return [[0.7, 1.01, '70%+'], [0.3, 0.7, '30–70%']].map(([lo, hi, l]) => { const g = all.filter(x => x.p >= lo && x.p < hi); return g.length ? `${l} came true <b>${g.filter(x => x.hit).length} of ${g.length}</b>` : ''; }).filter(Boolean).join(', ');
+  };
+  return `<p class="note polerec"><b>Track record</b> · favourite to win was right: ${fav}.<br>Top 5 said ${band(1, 5) || '–'}. Top 10 said ${band(2, 10) || '–'}.${done.length < 15 ? ' Too few races so far to judge it.' : ''}</p>`;
+}
+
+function panelRaceCall() {
+  const r = raceCall();
+  if (!r) return '<p class="note">Waiting for timing data…</p>';
+  const { inp } = r;
+  const pct = x => { const v = Math.round(x * 100); return r.settled ? v : x >= 0.995 ? '>99' : x > 0 && x < 0.005 ? '<1' : v; };
+  const cls = x => r.settled ? (x ? 'c-green' : 'dimt') : x >= 0.7 ? 'c-green' : x >= 0.3 ? '' : x >= 0.1 ? 'c-yellow' : 'dimt';
+  const cars = r.cars.slice().sort((a, b) => a.avg - b.avg);
+  const top = cars.slice().sort((a, b) => b.win - a.win)[0];
+  let verdict, k;
+  if (r.settled) { verdict = 'won the race'; k = 'hi'; }
+  else if (top.win >= 0.7) { verdict = 'strong favourite to win'; k = 'hi'; }
+  else if (top.win >= 0.45) { verdict = 'favourite to win'; k = 'mid'; }
+  else { verdict = 'open race: no clear favourite'; k = 'lo'; }
+  const rows = cars.map(c => {
+    const d = r.byN[c.n] || {}, L = L_()[c.n] || {};
+    const plan = r.settled ? '' : L.Retired || L.Stopped ? 'out' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
+    return `<tr class="${c.n === selected ? 'selrow' : ''}"><td class="mono">P${c.pos}</td><td>${chipD(c.n)}</td>
+      <td class="mono t ${cls(c.win)}">${pct(c.win)}%</td><td class="mono t ${cls(c.top5)}">${pct(c.top5)}%</td><td class="mono t ${cls(c.top10)}">${pct(c.top10)}%</td><td class="rcplan">${plan}</td></tr>`;
+  }).join('');
+  const lapTxt = inp.total ? (inp.started ? `Lap ${inp.cur} of ${inp.total}` : `Before the start · ${inp.total} laps`) : '';
+  const early = !inp.started || inp.cur < Math.max(6, inp.total * 0.15);
+  const qn = Object.keys(qualiPace()).length;
+  const basis = r.settled ? 'Race over.'
+    : `${lapTxt} · the rest of the race played out ${RaceSim.P.runs.toLocaleString()} times. Includes pit stops still to make, tyre wear, a <b>${Math.round(r.sc * 100)}%</b> chance of a safety car and the chance of retirements.`
+      + (early ? ` <b>Early:</b> mostly ${inp.started ? 'the order and ' : 'grid order and '}${qn ? 'qualifying pace' : 'little else (no qualifying pace saved)'}, so these move a lot in the first laps.` : '');
+  return `<div class="ecard pole ${k}"><h4>Race call</h4>
+    <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
+    <p class="note">${basis} These are chances, not certainties.</p>
+    <p class="note">Tested on all 24 races of 2025: the favourite to win won 18 of 24 from the grid and 19 of 24 at half distance. Top 10 chances of 70–90% came true 84% of the time.</p>${raceRecordHtml()}</div>
+    <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="note">Sorted by where each driver is expected to finish. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres that are past their usual life.</p>`;
+}
+
 function panelLaps(n) {
   const kind = sessionKind();
   const series = [n, engCompare && engCompare !== n ? engCompare : null].filter(Boolean)
@@ -1349,7 +1498,7 @@ function engRender() {
 
   if (!n) { $('engBody').innerHTML = '<p class="note">Waiting for timing data…</p>'; return; }
   const body = tab === 'driver' ? panelDriver(n) : tab === 'battles' ? panelBattles() : tab === 'knockout' ? panelKnockout() : tab === 'proj' ? null
-    : tab === 'longruns' ? panelLongRuns() : tab === 'strategy' ? panelStrategy() : panelLaps(n);
+    : tab === 'longruns' ? panelLongRuns() : tab === 'call' ? panelRaceCall() : tab === 'strategy' ? panelStrategy() : panelLaps(n);
   const recorded = Object.values(hist.laps).reduce((a, l) => a + l.length, 0);
   $('engInfo').textContent = `${recorded} laps recorded`;
   if (tab === 'proj') projMount($('engBody'));

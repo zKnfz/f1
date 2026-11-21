@@ -187,6 +187,8 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .et.pj tr.pjtop td{background:#241538} .et.pj tr.pjtop td:first-child{box-shadow:inset 3px 0 var(--purple)}
 @media (max-width:640px){.pjpole{display:block;margin:2px 0 0;font-size:9px;padding:1px 4px}}
 .polerec{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.et.rc td{white-space:nowrap} .et.rc .rcplan{font-size:11.5px}
+@media (max-width:640px){.et.rc .rcplan{display:none} .et.rc th:last-child{display:none}}
 .pjclock{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;color:var(--muted);font-size:12px}
 .pjclock b{font-size:24px;color:var(--text)} .pjclock b.c-red{color:var(--red)} .pjclock b.c-yellow{color:var(--yellow)} .pjclock b.dimt{color:var(--dim)}
 .ecard.pole{margin-bottom:12px;border-left:3px solid #55607a}
@@ -362,7 +364,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=36"></script>
+<script src="direct.js?v=37"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -856,7 +858,8 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="engineer.js?v=36"></script>
-<script src="rain.js?v=36"></script>
+<script src="racesim.js?v=37"></script>
+<script src="engineer.js?v=37"></script>
+<script src="rain.js?v=37"></script>
 </body>
 </html>

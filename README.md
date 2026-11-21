@@ -58,6 +58,26 @@ hold more than the browser has learned itself. It needs Google Chrome and Node 1
 This cannot run as a GitHub Actions job: Formula 1's network refuses connections from
 GitHub's servers (HTTP 403).
 
+## Race call (winner, top 5, top 10)
+
+In a race the first tab, **Race call**, gives each driver's chance to win, finish in the top 5
+and finish in the top 10. `racesim.js` plays out the rest of the race a few thousand times from
+the real gaps, using each driver's recent race pace (corrected for tyre age), tyre wear, the
+pit stops still to make, the chance of a safety car and of retiring, and a margin needed to
+overtake a car on the same strategy. Before the race has its own laps it leans on grid order
+and qualifying pace, which the site saves during qualifying (`pitwall-qpace-<meeting>`).
+
+Its settings were tuned on the 2025 races:
+
+```
+node tools/fetch-races.mjs 2025      # download lap-by-lap history from the Jolpica API into data/races/
+node tools/race-backtest.mjs         # test the race call at 0/25/50/75/90% distance of each race
+node tools/race-tune.mjs             # try settings and print the best (slow)
+```
+
+Each call is also logged during a live race and checked against the result; the record shows
+on the card.
+
 ## Notes
 - Data comes from Formula 1's public live timing feed and the circuit outlines from
   the MultiViewer API. Either could change or be restricted at any time.
