@@ -787,6 +787,7 @@ function keyedRows(tbody, items) {
   requestAnimationFrame(() => { for (const tr of tbody.querySelectorAll('.pjnew')) tr.classList.remove('pjnew'); });
 }
 
+const lapBarW = {};
 function projMount(el) {
   const lines = L_(), race = sessionKind() === 'race';
   const f = window.sessionFastest;
@@ -811,9 +812,17 @@ function projMount(el) {
     if (v != null) return `<td class="mono t ${pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
     const later = cur && cur.slice(i + 1).some(x => x != null);
     const next = cur && !later && cur.findIndex(x => x == null) === i;
-    return `<td class="mono t dimt">${later ? '–' : next ? 'on it' : ''}</td>`;
+    return `<td class="mono t dimt${i === 2 ? ' pjs3' : ''}">${later ? '–' : next ? 'on it' : ''}</td>`;
   };
   const span = race ? 3 : 4;
+  // Where the car is on its lap: a bar split at the sector lines, filled as mini-sectors light up.
+  const lapCell = (n, L, lv) => {
+    const counts = arr(L.Sectors).map(s => arr(s?.Segments).length), total = counts.reduce((a, b) => a + b, 0);
+    const frac = lv?.lapFrac ?? null, pct = frac == null ? 0 : Math.round(Math.min(1, frac) * 100);
+    let at = 0;
+    const ticks = total ? counts.slice(0, -1).map(c => { at += c; return `<u style="left:${(at / total * 100).toFixed(1)}%"></u>`; }).join('') : '';
+    return `<td class="pjlap"><div class="lapbar${lv?.slow ? ' slow' : ''}"><i data-lap="${n}" data-w="${pct}"></i>${ticks}</div><span class="mono dimt">${frac == null ? '–' : pct + '%'}</span></td>`;
+  };
   const rows = cars.map(({ n, L, lv, pb, best }) => {
     const cur = lv?.cur || [null, null, null];
     const bestCell = `<td class="mono t pjbest">${best ? fmtLapT(best) : '<span class="dimt">no time</span>'}</td>`;
@@ -824,7 +833,7 @@ function projMount(el) {
       let posTxt = '';
       if (!race) {
         const pNew = posFor(n, p), pNow = posNow(n);
-        posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt">stays</span>`;
+        posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt pjstay">stays</span>`;
       }
       const ch = calibrate(chance[n] ?? 0), pct = Math.round(ch * 100);
       const chCls = ch >= 0.5 ? 'hi' : ch >= 0.15 ? 'mid' : 'lo';
@@ -833,14 +842,14 @@ function projMount(el) {
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
+    return { k: n, cls: n === selected ? 'selrow' : '', html: `<td>${chipD(n)}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}` };
   });
 
   // Build the frame once; after that only rows and notes change.
   if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== String(race)) {
     el.innerHTML = `<div id="pjFrame"><div id="pjLearn"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
-      <table class="et wide pj"><thead><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div></div>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the fastest lap of the session">Fastest?</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
     el.dataset.pjRace = String(race);
     el.dataset.html = '';
@@ -856,6 +865,13 @@ function projMount(el) {
   const pjBody = el.querySelector('#pjBody');
   pjBody.closest('table').style.display = cars.length ? '' : 'none';
   keyedRows(pjBody, rows);
+  // Grow each lap bar from where it was, so progress glides instead of jumping.
+  for (const bar of pjBody.querySelectorAll('i[data-lap]')) {
+    const k = bar.dataset.lap, w = Number(bar.dataset.w);
+    if (bar.dataset.set === String(w)) continue;
+    if (!bar.dataset.set) { const from = lapBarW[k] ?? 0; bar.style.transition = 'none'; bar.style.width = (from <= w ? from : 0) + '%'; bar.getBoundingClientRect(); bar.style.transition = ''; }
+    bar.style.width = w + '%'; bar.dataset.set = String(w); lapBarW[k] = w;
+  }
 
   const board = el.querySelector('#pjBoard');
   if (board) {
