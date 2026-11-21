@@ -247,6 +247,12 @@ http.createServer(async (req, res) => {
       res.writeHead(502); return res.end(e.message);
     }
   }
+  // Shared learning files (see tools/record.mjs).
+  const lm = /^\/learned\/([\w.-]+\.json)$/.exec(url.pathname);
+  if (lm) {
+    try { const body = await fs.readFile(path.join(DIR, 'learned', lm[1])); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(body); }
+    catch { res.writeHead(404); return res.end('not found'); }
+  }
   const file = PAGES[url.pathname];
   if (!file) { res.writeHead(404); return res.end('Not found'); }
   res.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8' });

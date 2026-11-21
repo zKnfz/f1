@@ -38,6 +38,22 @@ Options: `FEEDS=3` (how many connections race each other for the fastest
 update) and `PORT=8765`. In the browser, `?mode=direct` or `?mode=relay`
 forces a mode, and `?feeds=3` sets the connection count in direct mode.
 
+## Self-tuning and the session recorder
+
+The lap projections tune themselves: after every lap the page compares what it projected with
+the real lap time and adjusts. To keep that going when nobody has the page open, a scheduled
+GitHub Actions job (`.github/workflows/record.yml`) checks every 15 minutes whether a session
+is on. If one is, it opens the page in a headless browser for the whole session
+(`tools/record.mjs`) and commits what the page learned to `learned/`. Every visitor's browser
+then loads those files when they hold more than the browser has learned itself.
+
+Run it by hand from the repo's Actions tab ("Record F1 sessions" → Run workflow), or locally:
+
+```bash
+npm install --no-save playwright-core
+node tools/record.mjs --test
+```
+
 ## Notes
 - Data comes from Formula 1's public live timing feed and the circuit outlines from
   the MultiViewer API. Either could change or be restricted at any time.

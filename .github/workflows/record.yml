@@ -1,0 +1,63 @@
+# Opens the site in a headless browser during every F1 session so its self-tuning model keeps
+# learning, then saves what it learned into learned/ for everyone who uses the site.
+name: Record F1 sessions
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # a quick check; it only records when a session is on
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Only test that the recorder can reach the F1 feed'
+        type: boolean
+        default: false
+  push:
+    paths: ['tools/**', '.github/workflows/record.yml']   # test the recorder when it changes
+
+permissions:
+  contents: write
+
+concurrency:
+  group: record
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is a session on?
+        id: check
+        run: node tools/session-check.mjs
+
+      - name: Decide what to do
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.test }}" = "true" ]; then echo "run=test" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.check.outputs.record }}" = "true" ]; then echo "run=record" >> "$GITHUB_OUTPUT"
+          else echo "run=none" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Install the browser driver
+        if: steps.mode.outputs.run != 'none'
+        run: npm install --no-save --no-package-lock playwright-core
+
+      - name: Test the recorder
+        if: steps.mode.outputs.run == 'test'
+        run: node tools/record.mjs --test
+
+      - name: Record the session
+        if: steps.mode.outputs.run == 'record'
+        run: node tools/record.mjs --wait=${{ steps.check.outputs.wait }} --max=${{ steps.check.outputs.max }}
+
+      - name: Save what it learned
+        if: always() && steps.mode.outputs.run != 'none'
+        run: |
+          git config user.name "pitwall-recorder"
+          git config user.email "pitwall-recorder@users.noreply.github.com"
+          git add learned
+          if git diff --cached --quiet; then echo "Nothing new to save."; exit 0; fi
+          git commit -m "Recorder: ${{ steps.check.outputs.name || 'test run' }}"
+          git pull --rebase
+          git push

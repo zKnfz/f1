@@ -97,6 +97,28 @@ es.addEventListener('feed', e => {
   }
 });
 
+// ---------- Shared learning ----------
+// A scheduled job on GitHub opens this same page during every session and saves what it
+// learned into the repo's learned/ folder. Each browser picks that up when it has learned
+// from more laps than the browser itself, so nobody starts from zero or misses a session.
+const SHARED_BASE = (() => {
+  const h = location.hostname;
+  if (!h.endsWith('.github.io')) return 'learned/';
+  // Read straight from the repo so it is fresh even before the site itself is rebuilt.
+  return `https://raw.githubusercontent.com/${h.split('.')[0]}/${location.pathname.split('/')[1]}/main/learned/`;
+})();
+let sharedIndex = null;
+const sharedTried = {};
+function sharedAdopt(key, localSize, apply) {
+  if (sharedTried[key]) return;
+  sharedTried[key] = 1;
+  sharedIndex ??= fetch(SHARED_BASE + 'index.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
+  sharedIndex.then(idx => {
+    if (!(idx.files?.[key] > localSize())) return;
+    return fetch(`${SHARED_BASE}${key}.json`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) apply(d); });
+  }).catch(() => {});
+}
+
 // ---------- Lap projection (self-tuning) ----------
 // A lap in progress is projected as:
 //   time so far + (driver's best times for the rest of the lap) × (1 + adjustment)
@@ -124,7 +146,7 @@ const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
 const COMPOUND = { SOFT: 0, MEDIUM: 1, HARD: 2 };
 
 const modelGroup = () => (sessionKind() === 'race' ? 'race' : 'other');
-const modelKey = () => `pitwall-model-v2-${state.SessionInfo?.Meeting?.Circuit?.Key ?? 'x'}-${modelGroup()}`;
+const modelKey = () => `pitwall-model-v3-${state.SessionInfo?.Meeting?.Circuit?.Key ?? 'x'}-${modelGroup()}`;
 let model = null; // { key, A (6×6), b (6), laps, used: {lapId: 1}, theta, drv: {n: [residuals]} }
 
 function blankModel(key) {
@@ -138,6 +160,12 @@ function loadModel() {
   model = m?.key === key ? m : blankModel(key);
   model.theta = null;
   trainFromHistory();
+  sharedAdopt(key, () => (model?.key === key ? model.laps : 0), d => {
+    if (d.key !== key || model?.key !== key || !(d.laps > model.laps)) return;
+    model = { ...blankModel(key), ...d, theta: null };
+    trainFromHistory(); // add any laps this browser has that the shared one has not seen
+    engDirty = true;
+  });
   return model;
 }
 let saveModelTimer = null;
@@ -207,7 +235,7 @@ function trainFromHistory() {
       const sc = r.s || [];
       const ok = sc.length === 3 && sc.every(x => x > 0) && !r.pit && (r.ts || '1') === '1';
       if (!ok) continue;
-      const id = `${hist.key}:${n}:${r.lap}:${r.at}`;
+      const id = `${hist.key}:${n}:${r.lap}`;
       // The saved history can start partway through a session, so only learn once the
       // best sectors seen so far are close to the driver's real ones.
       const real = pbSectors(n), realSum = real.every(Boolean) ? real.reduce((a, b) => a + b, 0) : null;
@@ -249,7 +277,7 @@ es.addEventListener('lap', e => {
   const best = bestLap(n);
   if (best && rec.time > best * 1.03) return; // not a push lap
   if (flagDone[n]?.hit) return; // lifted for a yellow flag
-  const m = loadModel(), id = `${hist.key}:${n}:${rec.lap}:${rec.at}`;
+  const m = loadModel(), id = `${hist.key}:${n}:${rec.lap}`;
   if (m.used[id]) return;
   m.used[id] = 1; m.laps++;
   for (const s of snaps) addSample(m, s.f, (rec.time - s.doneT) / s.pbRest - 1, 3 / snaps.length, n, s.done);
@@ -643,6 +671,12 @@ function loadCalib() {
   try { c = JSON.parse(localStorage.getItem(CALIB_KEY)); } catch {}
   calib = Array.isArray(c?.pts) ? c : { pts: [] };
   calib.fit = null;
+  sharedAdopt(CALIB_KEY, () => calib.pts.length, d => {
+    if (!Array.isArray(d.pts) || d.pts.length <= calib.pts.length) return;
+    calib = { pts: d.pts, fit: null };
+    try { localStorage.setItem(CALIB_KEY, JSON.stringify({ pts: calib.pts })); } catch {}
+    engDirty = true;
+  });
   return calib;
 }
 const logit = p => { const q = Math.min(0.999, Math.max(0.001, p)); return Math.log(q / (1 - q)); };
@@ -863,6 +897,12 @@ function loadScore() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(key)); } catch {}
   score = s?.key === key ? s : { key, laps: [] };
+  sharedAdopt(key, () => (score?.key === key ? score.laps.length : 0), d => {
+    if (d.key !== key || score?.key !== key || !Array.isArray(d.laps) || d.laps.length <= score.laps.length) return;
+    score = { key, laps: d.laps };
+    saveScore();
+    engDirty = true;
+  });
   return score;
 }
 function saveScore() {
