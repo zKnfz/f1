@@ -331,9 +331,12 @@ function panelProjected() {
   const cars = all.map(n => {
     const L = lines[n] || {};
     if (L.InPit || L.Retired || L.Stopped || L.KnockedOut || (fin && (Number(L.Status) & 1024))) return null;
-    return { n, L, lv: liveLap(n), pb: pbSectors(n) };
+    return { n, L, lv: liveLap(n), pb: pbSectors(n), best: bestLap(n) };
   }).filter(Boolean);
-  if (!cars.length) return '<p class="note">No cars are out on track right now.</p>';
+  // Where a time would land among the best laps already set (ignoring the driver's own).
+  const posFor = (n, t) => all.filter(m => m !== n && (bestLap(m) ?? Infinity) < t).length + 1;
+  const posNow = n => { const b = bestLap(n); return b ? posFor(n, b) : null; };
+
   cars.sort((a, b) => (a.lv?.projected ?? Infinity) - (b.lv?.projected ?? Infinity) || (b.lv?.done ?? 0) - (a.lv?.done ?? 0));
   const secCell = (v, pb, i, cur) => {
     if (v != null) return `<td class="mono t ${pb != null && v <= pb ? 'c-green' : 'c-yellow'}">${fmt3(v)}</td>`;
@@ -341,23 +344,53 @@ function panelProjected() {
     const next = cur && !later && cur.findIndex(x => x == null) === i;
     return `<td class="mono t dimt">${later ? '–' : next ? 'on it' : ''}</td>`;
   };
-  const rowsH = cars.map(({ n, L, lv, pb }) => {
+  const rowsH = cars.map(({ n, L, lv, pb, best }) => {
     const cur = lv?.cur || [null, null, null];
-    const outLap = !!L.PitOut;
-    let proj = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${outLap ? 'out lap' : 'starting a lap'}</td>`;
+    const pNow = race ? null : posNow(n);
+    const bestCell = `<td class="mono t pjbest">${best ? fmtLapT(best) : '<span class="dimt">no time</span>'}</td>`;
+    let tail = `<td class="mono t dimt" colspan="${race ? 2 : 3}">${L.PitOut ? 'out lap' : 'starting a lap'}</td>`;
     if (lv?.projected) {
-      const d = f ? lv.projected - f.t : null;
-      const best = bestLap(n);
-      const pos = all.filter(m => m !== n && (bestLap(m) ?? Infinity) < lv.projected).length + 1;
-      const dCls = d != null && d < 0 ? 'c-purple' : d != null && d < 0.3 ? 'c-yellow' : '';
-      proj = `<td class="mono t"><b>${fmtLapT(lv.projected)}</b>${best && lv.projected < best ? ' <span class="c-green" title="Faster than their best lap">PB</span>' : ''}</td>`
-        + `<td class="mono t ${dCls}">${d != null && d < 0 ? '⚡ ' : ''}${signed(d)}</td>`
-        + (race ? '' : `<td class="mono t">P${pos}</td>`);
+      const p = lv.projected, beatFL = f && p < f.t;
+      const dBest = best ? p - best : null;
+      let posTxt = '';
+      if (!race) {
+        const pNew = posFor(n, p);
+        posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt">stays</span>`;
+      }
+      tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}"><b>${beatFL ? '⚡ ' : ''}${fmtLapT(p)}</b></td>`
+        + `<td class="mono t ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
+        + (race ? '' : `<td class="mono t">${posTxt}</td>`);
     }
-    return `<tr class="${n === selected ? 'selrow' : ''}"><td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${proj}</tr>`;
+    return `<tr class="${n === selected ? 'selrow' : ''}"><td>${chipD(n)}</td>${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur)).join('')}${bestCell}${tail}</tr>`;
   }).join('');
+  const table = cars.length
+    ? `<table class="et wide pj"><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t">vs best</th>${race ? '' : '<th class="t">Position</th>'}</tr>${rowsH}</table>`
+    : '<p class="note">No cars are out on track right now.</p>';
+
+  // Leaderboard of best laps so far, with laps in progress slotted in where they would land.
+  let board = '';
+  if (!race) {
+    const entries = all.filter(n => bestLap(n)).map(n => ({ n, t: bestLap(n), live: false }));
+    for (const c of cars) {
+      const p = c.lv?.projected;
+      if (p && (!c.best || p < c.best)) entries.push({ n: c.n, t: p, live: true, done: c.lv.done });
+    }
+    entries.sort((a, b) => a.t - b.t);
+    const top = entries.find(e => !e.live)?.t;
+    const cut = sessionKind() === 'quali' ? arr(state.TimingData?.NoEntries)[(state.TimingData?.SessionPart || 1)] : null;
+    let pos = 0;
+    board = entries.map(e => {
+      if (!e.live) pos++;
+      const line = cut && !e.live && pos === cut + 1 ? `<tr class="cutline"><td colspan="3">knockout line</td></tr>` : '';
+      const gap = top ? (e.t === top && !e.live ? 'P1' : signed(e.t - top)) : '';
+      return line + (e.live
+        ? `<tr class="pjlive"><td class="mono">↳</td><td>${chipD(e.n)} <span class="dimt">S${e.done}</span></td><td class="mono t">${fmtLapT(e.t)} <span class="dimt">${gap}</span></td></tr>`
+        : `<tr><td class="mono">P${pos}</td><td>${chipD(e.n)}</td><td class="mono t">${fmtLapT(e.t)} <span class="dimt">${gap}</span></td></tr>`);
+    }).join('');
+    board = `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et">${board}</table></div>`;
+  }
   return `<p class="note">${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projected laps assume each driver matches their own best in the sectors still to come. Green sectors beat their best, yellow ones don't.</p>
-    <table class="et wide"><tr><th>Driver</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t">Projected</th><th class="t">vs fastest</th>${race ? '' : '<th class="t">Would be</th>'}</tr>${rowsH}</table>`;
+    <div class="${race ? '' : 'pjgrid'}"><div>${table}</div>${board}</div>`;
 }
 
 function panelLongRuns() {
