@@ -117,7 +117,8 @@ const PRIOR = {
 const PRIOR_LAPS = 15, FEAT_SCALE = [1, 0.02, 0.15, 0.1, 0.8, 1];
 const FORGET = 0.997; // each new sample makes older ones count a little less
 // Usual error per second of lap still to go (learned; starts from the recorded laps).
-const SIGMA_PRIOR = 0.009, SIGMA_PRIOR_N = 20;
+// Separate for a lap still in S1, one with S1 done, and one with S2 done.
+const SIGMA_PRIOR = [0.0125, 0.009, 0.0105], SIGMA_PRIOR_N = 15;
 // Beyond these, a practice or qualifying lap is a cool-down or an aborted lap.
 const SLOW_AFTER = [0.07, 0.045], SLOW_I1 = 0.9;
 const COMPOUND = { SOFT: 0, MEDIUM: 1, HARD: 2 };
@@ -169,7 +170,7 @@ function solveTheta(m) {
   return th.every(isFinite) ? th : p.slice();
 }
 function theta() { const m = loadModel(); return (m.theta ??= solveTheta(m)); }
-function addSample(m, f, y, w, n) {
+function addSample(m, f, y, w, n, stage = 1) {
   const pred = f.reduce((a, x, i) => a + x * (m.theta ?? solveTheta(m))[i], 0);
   for (let i = 0; i < 6; i++) {
     m.b[i] = m.b[i] * FORGET + w * f[i] * y;
@@ -177,7 +178,8 @@ function addSample(m, f, y, w, n) {
   }
   m.theta = null;
   const r = (m.drv[n] ??= []); r.push(y - pred); if (r.length > 12) r.shift();
-  m.e2 = (m.e2 || 0) * FORGET + w * (y - pred) ** 2; m.en = (m.en || 0) * FORGET + w;
+  const g = ((m.sg ??= {})[stage] ??= { e2: 0, en: 0 });
+  g.e2 = g.e2 * FORGET + w * (y - pred) ** 2; g.en = g.en * FORGET + w;
 }
 function driverNudge(n) {
   const r = loadModel().drv[n] || [];
@@ -216,7 +218,7 @@ function trainFromHistory() {
         for (const done of [1, 2]) {
           const doneT = sc.slice(0, done).reduce((a, b) => a + b, 0), donePb = pb.slice(0, done).reduce((a, b) => a + b, 0);
           const pbRest = pb.slice(done).reduce((a, b) => a + b, 0);
-          addSample(m, [1, doneT / donePb - 1, 0, 0, ...tf], (r.time - doneT) / pbRest - 1, 1, n);
+          addSample(m, [1, doneT / donePb - 1, 0, 0, ...tf], (r.time - doneT) / pbRest - 1, 1, n, done);
         }
       }
       pb = pb.map((p, i) => (p == null || sc[i] < p ? sc[i] : p));
@@ -237,7 +239,7 @@ es.addEventListener('feed', e => {
     const p = lapInputs(n);
     if (!p || p.slow) continue;
     // Keep one snapshot per quarter of each sector, so every lap counts about the same.
-    (lapSnaps[n] ??= {})[`${p.done}:${Math.min(3, Math.floor(p.frac * 4))}`] = { f: p.f, doneT: p.doneT, pbRest: p.pbRest };
+    (lapSnaps[n] ??= {})[`${p.done}:${Math.min(3, Math.floor(p.frac * 4))}`] = { f: p.f, doneT: p.doneT, pbRest: p.pbRest, done: p.done };
   }
 });
 es.addEventListener('lap', e => {
@@ -249,7 +251,7 @@ es.addEventListener('lap', e => {
   const m = loadModel(), id = `${hist.key}:${n}:${rec.lap}:${rec.at}`;
   if (m.used[id]) return;
   m.used[id] = 1; m.laps++;
-  for (const s of snaps) addSample(m, s.f, (rec.time - s.doneT) / s.pbRest - 1, 3 / snaps.length, n);
+  for (const s of snaps) addSample(m, s.f, (rec.time - s.doneT) / s.pbRest - 1, 3 / snaps.length, n, s.done);
   saveModel();
 });
 
@@ -555,11 +557,58 @@ function panelKnockout() {
 // How unsure a projection is, in seconds. Errors grow with how much of the lap is left;
 // the size per second of lap left is learned along with the model (see addSample).
 function projSigma(lv) {
-  const m = loadModel();
-  const k = Math.sqrt(((m.e2 || 0) + SIGMA_PRIOR ** 2 * SIGMA_PRIOR_N) / ((m.en || 0) + SIGMA_PRIOR_N));
-  const left = lv.left ?? 30;
-  return Math.max(0.06, k * left * (lv.done === 0 ? 1.4 : 1));
+  const g = loadModel().sg?.[lv.done] || { e2: 0, en: 0 }, p0 = SIGMA_PRIOR[lv.done] ?? 0.01;
+  const k = Math.sqrt((g.e2 + p0 ** 2 * SIGMA_PRIOR_N) / (g.en + SIGMA_PRIOR_N));
+  return Math.max(0.06, k * (lv.left ?? 30));
 }
+
+// ---------- Chance calibration ----------
+// Makes the chances honest: if laps shown at 80% only come true 6 times in 10, later ones
+// are shown lower. It fits a correction (shift and stretch on the log-odds scale) to every
+// checked lap from all race weekends, and stays close to "no correction" until there is
+// enough evidence.
+const CALIB_KEY = 'pitwall-calib-v1', CALIB_PRIOR = 12;
+let calib = null;
+function loadCalib() {
+  if (calib) return calib;
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem(CALIB_KEY)); } catch {}
+  calib = Array.isArray(c?.pts) ? c : { pts: [] };
+  calib.fit = null;
+  return calib;
+}
+const logit = p => { const q = Math.min(0.999, Math.max(0.001, p)); return Math.log(q / (1 - q)); };
+function fitCalib(pts) {
+  // Logistic fit of "came true" on the raw chance, pulled towards a = 0, b = 1 (no change).
+  let a = 0, b = 1;
+  for (let it = 0; it < 25; it++) {
+    let ga = -CALIB_PRIOR * a * 0.25, gb = -CALIB_PRIOR * (b - 1), haa = CALIB_PRIOR * 0.25, hab = 0, hbb = CALIB_PRIOR;
+    for (const [raw, hit] of pts) {
+      const x = logit(raw), p = 1 / (1 + Math.exp(-(a + b * x))), w = p * (1 - p);
+      ga += hit - p; gb += (hit - p) * x; haa += w; hab += w * x; hbb += w * x * x;
+    }
+    const det = haa * hbb - hab * hab;
+    if (!(det > 1e-9)) break;
+    const da = (hbb * ga - hab * gb) / det, db = (haa * gb - hab * ga) / det;
+    a += Math.max(-1, Math.min(1, da)); b += Math.max(-0.5, Math.min(0.5, db));
+    if (Math.abs(da) + Math.abs(db) < 1e-5) break;
+  }
+  return { a, b: Math.max(0.2, Math.min(3, b)) };
+}
+function calibrate(raw) {
+  if (!(raw > 0)) return 0;
+  const c = loadCalib();
+  c.fit ??= fitCalib(c.pts);
+  return 1 / (1 + Math.exp(-(c.fit.a + c.fit.b * logit(raw))));
+}
+function addCalib(raw, hit) {
+  const c = loadCalib();
+  c.pts.push([+raw.toFixed(4), hit ? 1 : 0]);
+  if (c.pts.length > 6000) c.pts = c.pts.slice(-6000);
+  c.fit = null;
+  try { localStorage.setItem(CALIB_KEY, JSON.stringify({ pts: c.pts })); } catch {}
+}
+
 // Normal distribution helpers.
 const npdf = (x, m, s) => Math.exp(-0.5 * ((x - m) / s) ** 2) / (s * 2.5066282746);
 function ncdf(x, m, s) {
@@ -673,7 +722,7 @@ function projMount(el) {
         const pNew = posFor(n, p), pNow = posNow(n);
         posTxt = !best ? `<b>P${pNew}</b>` : dBest < 0 && pNew < pNow ? `P${pNow} → <b class="c-green">P${pNew}</b>` : `P${pNow} <span class="dimt">stays</span>`;
       }
-      const ch = chance[n] ?? 0, pct = Math.round(ch * 100);
+      const ch = calibrate(chance[n] ?? 0), pct = Math.round(ch * 100);
       const chCls = ch >= 0.5 ? 'hi' : ch >= 0.15 ? 'mid' : 'lo';
       tail = `<td class="mono t ${beatFL ? 'c-purple' : ''}${lv.done === 0 ? ' rough' : ''}"><b>${lv.done === 0 ? '≈' : ''}${tw('p' + n, p)}</b> <span class="dimt pjsig">±${projSigma(lv).toFixed(1)}</span></td>`
         + `<td class="mono t pjvs ${dBest == null ? 'dimt' : dBest < 0 ? 'c-green' : 'c-red'}">${dBest == null ? 'first' : signed(dBest)}</td>`
@@ -697,7 +746,7 @@ function projMount(el) {
   const sec = x => (x >= 0 ? '+' : '−') + Math.abs(x * lapT).toFixed(2) + 's';
   setHtml('pjLearn', `<p class="note learn">🧠 <b>Self-tuning</b> · learned from <b>${mi.laps}</b> push lap${mi.laps === 1 ? '' : 's'} at this track${mi.laps < 10 ? ' (still mostly using its starting values)' : ''}. `
     + `Right now: drivers finish <b>${sec(mi.theta[0])}</b> off their best sectors · tyres <b>${sec(mi.theta[4])}</b> per 10 laps of age · <b>${sec(mi.theta[5])}</b> per step harder than the tyre of their best lap.</p>`);
-  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session; even 90% misses one time in ten. ≈ means rough: before sector 1 is done it can be a second or two out.`);
+  setHtml('pjNote', `${f ? `Fastest lap: <b>${fmtLapT(f.t)}</b> ${esc(dInfo(f.n).code)}. ` : ''}Projections update with every mini-sector. ± is the usual error at that point in the lap. <b>Fastest?</b> is the chance the lap ends up as the fastest of the session, corrected against past results so 80% should come true about 8 times in 10. ≈ means rough: before sector 1 is done it can be a second or two out.`);
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
   const pjBody = el.querySelector('#pjBody');
@@ -771,30 +820,40 @@ setInterval(() => {
     const st = c.lv.done; // 1 = just finished S1, 2 = just finished S2
     if (st < 1) continue;
     const p = (predNow[c.n] ??= {});
-    if (!p[st]) p[st] = { proj: c.p, sig: c.s, ch: ch[c.n] ?? 0 };
+    if (!p[st]) p[st] = { proj: c.p, sig: c.s, raw: ch[c.n] ?? 0, ch: calibrate(ch[c.n] ?? 0) };
   }
 }, 500);
 es.addEventListener('lap', e => {
   const [n, rec] = e.detail;
   const preds = predDone[n]; predDone[n] = null;
-  if (!preds || !rec?.time || rec.pit || (rec.ts || '1') !== '1') return;
+  if (!preds || !rec?.time) return;
   const stages = Object.entries(preds);
   if (!stages.length) return;
   const sessionKey = hist.key, best = bestLap(n);
-  const push = !best || rec.time < best * 1.03;
+  // Aborted, pit and flag laps still count for the chances (they are misses), but not for the error.
+  const push = !rec.pit && (rec.ts || '1') === '1' && (!best || rec.time < best * 1.03);
   setTimeout(() => {
     const f = window.sessionFastest;
     const hit = !!f && f.n === n && Math.abs(f.t - rec.time) < 0.0005;
     const s = loadScore();
-    for (const [st, p] of stages) s.laps.push({ k: sessionKey, st: +st, err: push ? +(p.proj - rec.time).toFixed(3) : null, ch: +p.ch.toFixed(3), hit, at: Date.now() });
+    for (const [st, p] of stages) {
+      s.laps.push({ k: sessionKey, st: +st, err: push ? +(p.proj - rec.time).toFixed(3) : null, ch: +p.ch.toFixed(3), raw: +p.raw.toFixed(3), hit, at: Date.now() });
+      addCalib(p.raw, hit);
+    }
     saveScore();
     engDirty = true;
   }, SCORE_WAIT);
 });
 
+function calibLine() {
+  const n = loadCalib().pts.length;
+  if (n < 10) return `<p class="note">🎯 <b>Self-correcting chances</b> · ${n} checks so far. Not enough yet to correct anything, so chances are shown as calculated.</p>`;
+  const show = r => Math.round(calibrate(r) * 100) + '%';
+  return `<p class="note">🎯 <b>Self-correcting chances</b> · tuned on <b>${n}</b> checks from all weekends, so the number shown matches how often it really happens. Right now a calculated 50% is shown as <b>${show(0.5)}</b>, 80% as <b>${show(0.8)}</b> and 95% as <b>${show(0.95)}</b>.</p>`;
+}
 function scoreHtml() {
   const s = loadScore();
-  if (!s.laps.length) return `<div class="ecard"><h4>Scorecard</h4><p class="note">Nothing checked yet. Once laps finish, this shows how far off the projections were and how often each chance level actually came good.</p></div>`;
+  if (!s.laps.length) return `<div class="ecard"><h4>Scorecard</h4><p class="note">Nothing checked yet this weekend. Once laps finish, this shows how far off the projections were and how often each chance level actually came good.</p>${calibLine()}</div>`;
   const mae = a => a.length ? (a.reduce((x, y) => x + Math.abs(y), 0) / a.length).toFixed(2) + 's' : '–';
   const errLine = laps => {
     const e1 = laps.filter(l => l.st === 1 && l.err != null).map(l => l.err), e2 = laps.filter(l => l.st === 2 && l.err != null).map(l => l.err);
@@ -814,7 +873,7 @@ function scoreHtml() {
     <p class="note">Projections checked against real lap times (push laps only), and how often each fastest-lap chance came good. Each lap is checked twice, at the end of S1 and of S2, so counts are checks rather than laps.</p>
     <div class="kv"><div><span>This session</span><b>${errLine(now)}</b></div><div><span>This weekend</span><b>${errLine(s.laps)}</b></div></div>
     <table class="et sc"><tr><th>Fastest? said</th><th class="t">Came true</th><th class="t">Hit rate</th></tr>${rows}</table>
-    <p class="note">The chances are trustworthy when the hit rate is close to what it said (green). Grey means too few laps to tell yet.</p></div>`;
+    <p class="note">The chances are trustworthy when the hit rate is close to what it said (green). Grey means too few laps to tell yet.</p>${calibLine()}</div>`;
 }
 
 function panelLongRuns() {
