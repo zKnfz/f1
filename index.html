@@ -45,6 +45,22 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .card h3{margin:0;padding:10px 14px;font-size:11px;letter-spacing:.1em;color:var(--muted);border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between;gap:10px}
 .card h3 span:last-child{font-weight:500;letter-spacing:0;text-align:right}
+.alertbtn{background:none;border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:14px;padding:3px 8px;cursor:pointer;display:flex;align-items:center;gap:5px}
+.alertbtn span{font:600 11px 'JetBrains Mono',monospace;color:var(--muted)} .alertbtn:hover{border-color:var(--muted)}
+#alerts{position:fixed;bottom:14px;right:14px;z-index:60;display:flex;flex-direction:column;gap:8px;width:min(360px,calc(100vw - 28px));pointer-events:none}
+.al{pointer-events:auto;cursor:pointer;background:#171b26;border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;padding:10px 12px;font-size:13.5px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.45);animation:alIn .25s ease-out;transition:opacity .5s,transform .5s}
+.al time{display:block;margin-top:3px;font:500 10.5px 'JetBrains Mono',monospace;color:var(--dim)}
+.al.out{opacity:0;transform:translateX(30px)}
+.al-red{border-left-color:var(--red);background:#2a1418} .al-amber{border-left-color:var(--amber);background:#2a2214} .al-green{border-left-color:var(--green);background:#13261b}
+@keyframes alIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+#alertPanel{position:fixed;top:64px;right:14px;z-index:61;width:min(380px,calc(100vw - 28px));max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 12px 32px rgba(0,0,0,.5)}
+#alertPanel .aphead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px} #alertPanel label{font-size:12px;color:var(--muted);cursor:pointer}
+.apitem{font-size:12.5px;padding:6px 8px;border-left:3px solid var(--blue);margin-bottom:4px;background:#171b26;border-radius:4px} .apitem time{color:var(--dim);font:500 10.5px 'JetBrains Mono',monospace;margin-right:8px}
+.apitem.al-red{border-left-color:var(--red)} .apitem.al-amber{border-left-color:var(--amber)} .apitem.al-green{border-left-color:var(--green)}
+@media (max-width:640px){#alerts{bottom:10px;right:10px;width:calc(100vw - 20px)} .al{font-size:13px;padding:8px 10px} #alerts .al:nth-child(n+3){display:none}}
+.teletag{padding:6px 14px 10px;font-size:11px;color:var(--dim)} .teletag b{color:var(--green);font-weight:600}
+.teletag button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:5px;padding:2px 7px;font:inherit;cursor:pointer;margin-left:4px}
+.teletag button:hover{color:var(--text);border-color:var(--muted)}
 
 .tableWrap{overflow-x:auto}
 .table{min-width:1180px;position:relative}
@@ -351,6 +367,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
     <section class="card">
       <h3><span>TRACK</span><span id="circuitName"></span></h3>
       <svg id="map" viewBox="0 0 100 100"></svg>
+      <div class="teletag" id="teleTag"></div>
     </section>
     <section class="card">
       <h3><span>RACE CONTROL</span><span id="rcCount"></span></h3>
@@ -377,7 +394,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=46"></script>
+<script src="direct.js?v=47"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -402,8 +419,43 @@ const emit = (type, detail) => es.dispatchEvent(new CustomEvent(type, {detail}))
 let DIRECT = false;
 es.addEventListener('status', e=>{ feedStatus = e.detail.status; schedule(); });
 es.addEventListener('full', e=>{ state = e.detail; schedule(); loadCircuit(); });
+// Car GPS positions and telemetry (needs an F1 TV sign-in). Kept apart from `state`: only the
+// latest sample per car matters, and it arrives several times a second.
+//   tele.pos[n] = {x, y, t, status, at}   tele.car[n] = {kmh, throttle, brake, at}
+const tele = { pos:{}, car:{}, at:0 };
+function onTele(topic, d){
+  const now = Date.now(); tele.at = now;
+  if(topic==='Position'){
+    for(const s of arr(d.Position)){
+      const t = Date.parse(s.Timestamp);
+      for(const [n,p] of Object.entries(s.Entries||{})){
+        const prev = tele.pos[n];
+        if(prev && t <= prev.t) continue;
+        // Speed from the distance moved (positions are in tenths of a metre), used when the
+        // telemetry itself is missing.
+        const kmh = prev && t - prev.t < 3000 ? Math.hypot(p.X-prev.x, p.Y-prev.y)/10 / ((t-prev.t)/1000) * 3.6 : prev?.kmh;
+        tele.pos[n] = { x:p.X, y:p.Y, t, status:p.Status, kmh, at:now };
+      }
+    }
+  } else {
+    for(const s of arr(d.Entries)) for(const [n,c] of Object.entries(s.Cars||{})){
+      const ch = c.Channels||{};
+      tele.car[n] = { kmh:+ch['2'], throttle:+ch['4'], brake:+ch['5'], at:now };
+    }
+  }
+  es.dispatchEvent(new CustomEvent('tele', {detail: topic}));
+}
+// Speed of a car right now, from telemetry or from its positions; null if not known.
+function carSpeed(n){
+  const c = tele.car[n], p = tele.pos[n], now = Date.now();
+  if(c && now - c.at < 4000 && isFinite(c.kmh)) return c.kmh;
+  if(p && now - p.at < 4000 && isFinite(p.kmh)) return p.kmh;
+  return null;
+}
+
 es.addEventListener('feed', e=>{
   const [topic, data, sentAt] = e.detail;
+  if(topic==='Position' || topic==='CarData'){ onTele(topic, data); return; }
   state[topic] = merge(state[topic], data);
   schedule();
   if(sentAt) noteDelay(sentAt);
@@ -770,7 +822,7 @@ function renderClock(){
 // ---------- Track map ----------
 const NS='http://www.w3.org/2000/svg';
 const svg = $('map');
-let circuitInfo = null, circuitId = null, trackPath = null, trackLen = 0, dotLayer = null, dots = {};
+let circuitInfo = null, circuitId = null, trackPath = null, trackLen = 0, dotLayer = null, dots = {}, circXY = null;
 const progress = {}; // per driver: last completed segment index and when it changed
 
 async function loadCircuit(){
@@ -795,6 +847,7 @@ function drawCircuit(c){
   const a = (c.rotation||0)*Math.PI/180, cx = (Math.max(...c.x)+Math.min(...c.x))/2, cy=(Math.max(...c.y)+Math.min(...c.y))/2;
   const rot = (x,y)=>{ const dx=x-cx, dy=y-cy; return [dx*Math.cos(a)-dy*Math.sin(a), -(dx*Math.sin(a)+dy*Math.cos(a))]; };
   const pts = c.x.map((x,i)=>rot(x,c.y[i]));
+  circXY = rot; // the same transform places live GPS positions on the map
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
   const pad = Math.max(maxX-minX, maxY-minY)*0.06;
@@ -850,8 +903,14 @@ function renderMap(){
     if(hidden) continue;
     const moving = !L.InPit && !L.Stopped;
     const segTime = lapRef(L)/N*1000;
-    const f = ((done + (moving ? Math.min(0.92,(now-p.t)/segTime) : 0)) / N) % 1;
-    const pt = trackPath.getPointAtLength(f*trackLen);
+    // Real GPS position when it is coming in; otherwise estimated from the mini-sectors.
+    const tp = tele.pos[n];
+    let pt;
+    if(tp && circXY && Date.now() - tp.at < 4000){ const [x,y] = circXY(tp.x, tp.y); pt = {x, y}; }
+    else {
+      const f = ((done + (moving ? Math.min(0.92,(now-p.t)/segTime) : 0)) / N) % 1;
+      pt = trackPath.getPointAtLength(f*trackLen);
+    }
     dot.g.setAttribute('transform',`translate(${pt.x.toFixed(1)},${pt.y.toFixed(1)})`);
     const sel = selected===n;
     dot.c.setAttribute('r', unit*(sel?8:6));
@@ -870,9 +929,36 @@ function frame(){
 }
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
+setInterval(renderTeleTag, 1000);
+function renderTeleTag(){
+  const el = $('teleTag'); if(!el) return;
+  const live = Date.now() - tele.at < 5000;
+  let have = ''; try{ have = localStorage.getItem('pitwall-f1tv') || ''; }catch{}
+  const h = live ? '<b>● Live GPS</b> car positions and speeds'
+    : DIRECT ? (have ? 'Positions estimated · F1 TV sign-in saved, waiting for car data <button id="f1tvBtn">Remove</button>'
+                     : 'Positions estimated from timing <button id="f1tvBtn">Use F1 TV for live GPS</button>')
+    : 'Positions estimated from timing (for live GPS add your F1 TV sign-in to the relay: data/f1tv-token.txt)';
+  if(el.dataset.h === h) return;
+  el.dataset.h = h; el.innerHTML = h;
+  const b = $('f1tvBtn'); if(b) b.onclick = f1tvSetup;
+}
+// Saves the viewer's own F1 TV sign-in in this browser (sent only to F1's live timing).
+function f1tvSetup(){
+  let have = ''; try{ have = localStorage.getItem('pitwall-f1tv') || ''; }catch{}
+  if(have){ if(confirm('Remove the saved F1 TV sign-in from this browser?')){ try{ localStorage.removeItem('pitwall-f1tv'); }catch{} location.reload(); } return; }
+  const raw = prompt('Live car positions need your own F1 TV sign-in.\n\n1. Sign in at formula1.com in this browser.\n2. Open the browser\'s developer tools → Application/Storage → Cookies → formula1.com.\n3. Copy the value of the "login-session" cookie and paste it here.\n\nIt is saved only in this browser and sent only to F1.');
+  if(!raw) return;
+  let tok = null;
+  try{ tok = JSON.parse(decodeURIComponent(raw.trim()))?.data?.subscriptionToken || null; }catch{}
+  if(!tok && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(raw.trim())) tok = raw.trim();
+  if(!tok){ alert('That doesn\'t look like the login-session cookie or a token. Nothing was saved.'); return; }
+  try{ localStorage.setItem('pitwall-f1tv', tok); }catch{}
+  location.reload();
+}
 </script>
-<script src="racesim.js?v=46"></script>
-<script src="engineer.js?v=46"></script>
-<script src="rain.js?v=46"></script>
+<script src="racesim.js?v=47"></script>
+<script src="engineer.js?v=47"></script>
+<script src="alerts.js?v=47"></script>
+<script src="rain.js?v=47"></script>
 </body>
 </html>

@@ -15,7 +15,19 @@ function startDirect(emit) {
     'Heartbeat', 'SessionInfo', 'SessionData', 'SessionStatus', 'TrackStatus', 'LapCount',
     'ExtrapolatedClock', 'DriverList', 'TimingData', 'TimingAppData', 'TimingStats',
     'RaceControlMessages', 'WeatherData', 'TopThree', 'PitLaneTimeCollection',
+    'Position.z', 'CarData.z', // car GPS and telemetry: need an F1 TV sign-in (see f1tv below)
   ];
+  // Your own F1 TV sign-in, saved in this browser only (the track card's "F1 TV" button), sent
+  // only to F1. It unlocks car positions and telemetry; without it they are estimated.
+  const f1tv = (() => { try { return localStorage.getItem('pitwall-f1tv') || ''; } catch { return ''; } })();
+  // "Position.z" / "CarData.z" arrive as base64 of raw-deflated JSON.
+  async function unz(b64) {
+    try {
+      const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+      const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+      return JSON.parse(text);
+    } catch { return null; }
+  }
   const conns = [];
   const seen = new Map();
   let status = 'connecting';
@@ -27,7 +39,7 @@ function startDirect(emit) {
 
   function connect(c) {
     c.live = false;
-    const ws = c.ws = new WebSocket(URL_);
+    const ws = c.ws = new WebSocket(f1tv ? `${URL_}?access_token=${encodeURIComponent(f1tv)}` : URL_);
     const ping = () => { if (ws.readyState === 1) { ws.send('{"type":6}' + RS); c.lastPing = Date.now(); } };
     ws.onopen = () => {
       ws.send(JSON.stringify({ protocol: 'json', version: 1 }) + RS);
@@ -48,13 +60,14 @@ function startDirect(emit) {
           if (seen.has(part)) continue;
           seen.set(part, now);
           const [topic, data, sentAt] = m.arguments;
+          if (topic.endsWith('.z')) { unz(data).then(d => d && emit('feed', [topic.slice(0, -2), d, sentAt])); continue; }
           emit('feed', [topic, data, sentAt]); // the page merges it into `state`
           afterFeed(topic, data);
         } else if (m.type === 3 && m.invocationId === '0') {
           if (m.error) { console.error('subscribe error:', m.error); continue; }
           // Take the full snapshot only when no other connection is already live,
           // so a reconnecting feed never rolls the state back.
-          if (!liveCount()) emit('full', m.result || {});
+          if (!liveCount()) { const r = m.result || {}; delete r['Position.z']; delete r['CarData.z']; emit('full', r); }
           c.live = true; c.retry = 0;
           setStatus('live');
           ensureHistory();

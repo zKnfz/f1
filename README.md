@@ -62,6 +62,29 @@ hold more than the browser has learned itself. It needs Google Chrome and Node 1
 This cannot run as a GitHub Actions job: Formula 1's network refuses connections from
 GitHub's servers (HTTP 403).
 
+## Alerts
+
+`alerts.js` pops up an alert (bottom right, with an optional sound: the 🔔 in the header) the
+moment the feed has it: safety car, VSC, red flag and the restart; double yellows; penalties,
+investigations and deleted laps for cars near the front; a car out; pit stops by the top 12;
+a driver into or out of the top 3, 5 or 10; a Race call Win / Top 5 / Top 10 chance moving 10
+points or more in a lap; and, with live GPS, a car slow or stopped on track. Click the bell
+for the list of recent alerts.
+
+## Live GPS and telemetry (F1 TV sign-in)
+
+Since 2025 F1 only sends car positions (`Position.z`) and telemetry (`CarData.z`) to
+connections signed in with an F1 TV account. Without it the map estimates positions from the
+timing. With your own sign-in the map shows real positions and the alerts can spot a car
+slowing or stopping before the yellow flag or race control message.
+
+- Website: the track card's "Use F1 TV for live GPS" button. Paste the value of the
+  `login-session` cookie from formula1.com (signed in). It stays in that browser and is sent only to F1.
+- Relay: put the same value (or the token inside it) in `data/f1tv-token.txt`, or set
+  `F1TV_TOKEN`. The relay log says "receiving Position" once it works.
+
+The sign-in expires after about 4–7 days, so renew it before a race weekend.
+
 ## Race call (winner, top 3, top 5, top 10)
 
 In a race the first tab, **Race call**, gives each driver's chance to win, finish in the top 3, the top 5

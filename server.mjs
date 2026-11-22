@@ -6,6 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8765;
@@ -15,7 +16,29 @@ const TOPICS = [
   'Heartbeat', 'SessionInfo', 'SessionData', 'SessionStatus', 'TrackStatus', 'LapCount',
   'ExtrapolatedClock', 'DriverList', 'TimingData', 'TimingAppData', 'TimingStats',
   'RaceControlMessages', 'WeatherData', 'TopThree', 'PitLaneTimeCollection',
+  // Car GPS positions and telemetry (speed, throttle, brake). Compressed, and since 2025 only
+  // sent to connections signed in with an F1 TV account (see f1tvToken below).
+  'Position.z', 'CarData.z',
 ];
+
+// Your own F1 TV sign-in, to unlock car positions and telemetry. Put it in the F1TV_TOKEN
+// environment variable or in data/f1tv-token.txt (not committed). Either the token itself or
+// the whole value of formula1.com's "login-session" cookie works. Without it everything else
+// still works; positions are then estimated from the timing.
+async function f1tvToken() {
+  let raw = process.env.F1TV_TOKEN || '';
+  if (!raw) try { raw = (await fs.readFile(path.join(DIR, 'data', 'f1tv-token.txt'), 'utf8')).trim(); } catch {}
+  return parseF1tv(raw);
+}
+export function parseF1tv(raw) {
+  raw = String(raw || '').trim();
+  if (!raw) return null;
+  try { const j = JSON.parse(decodeURIComponent(raw)); return j?.data?.subscriptionToken || null; } catch {}
+  return /^[\w-]+\.[\w-]+\.[\w-]+$/.test(raw) ? raw : null;
+}
+// "Position.z" / "CarData.z" arrive as base64 of raw-deflated JSON.
+function unz(b64) { try { return JSON.parse(zlib.inflateRawSync(Buffer.from(b64, 'base64'))); } catch { return null; } }
+let teleSeen = 0;
 
 let state = {};
 let feedStatus = 'connecting';
@@ -63,11 +86,13 @@ async function connect(c) {
   c.live = false;
   let ws;
   try {
-    const neg = await fetch(`https://${F1}/signalrcore/negotiate?negotiateVersion=1`, { method: 'POST' });
+    const tok = await f1tvToken(), auth = tok ? { Authorization: `Bearer ${tok}` } : {};
+    const neg = await fetch(`https://${F1}/signalrcore/negotiate?negotiateVersion=1`, { method: 'POST', headers: auth });
     if (!neg.ok) throw new Error(`negotiate ${neg.status}`);
     const cookie = (neg.headers.getSetCookie?.() || []).map(x => x.split(';')[0]).join('; ');
     const { connectionToken } = await neg.json();
-    ws = c.ws = new WebSocket(`wss://${F1}/signalrcore?id=${encodeURIComponent(connectionToken)}`, { headers: { Cookie: cookie } });
+    ws = c.ws = new WebSocket(`wss://${F1}/signalrcore?id=${encodeURIComponent(connectionToken)}`, { headers: { Cookie: cookie, ...auth } });
+    if (c.id === 1) console.log(tok ? 'F1 TV sign-in found: asking for car positions and telemetry' : 'No F1 TV sign-in: car positions will be estimated');
   } catch (e) {
     console.error(`feed ${c.id} connect failed:`, e.message);
     return reconnect(c);
@@ -89,6 +114,12 @@ async function connect(c) {
         if (seen.has(part)) continue;
         seen.set(part, now);
         const [topic, data, sentAt] = m.arguments;
+        if (topic.endsWith('.z')) {
+          // Positions and telemetry: decompressed here, sent on, never kept in the state.
+          const d = unz(data);
+          if (d) { broadcast('feed', [topic.slice(0, -2), d, sentAt]); if (!teleSeen++) console.log(new Date().toISOString(), `receiving ${topic.slice(0, -2)} (F1 TV sign-in works)`); }
+          continue;
+        }
         broadcast('feed', [topic, data, sentAt]); // send first, store after
         state[topic] = merge(state[topic], data);
         afterFeed(topic, data);
@@ -96,7 +127,7 @@ async function connect(c) {
         if (m.error) { console.error('subscribe error:', m.error); continue; }
         // Take the full snapshot only when no other connection is already live,
         // so a reconnecting feed never rolls the state back.
-        if (!liveCount()) { state = m.result || {}; broadcast('full', state); ensureHistory(); }
+        if (!liveCount()) { state = m.result || {}; delete state['Position.z']; delete state['CarData.z']; broadcast('full', state); ensureHistory(); }
         c.live = true; c.retry = 0;
         console.log(new Date().toISOString(), `feed ${c.id}: live (${liveCount()}/${FEEDS})`);
         updateStatus();
@@ -219,7 +250,7 @@ async function circuit(key, year) {
 }
 
 // ---------- HTTP ----------
-const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js' };
+const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js' };
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/events') {
