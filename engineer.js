@@ -1325,7 +1325,7 @@ function raceInputs() {
     const med = ok.length ? ok.map(r => r.time).sort((a, b) => a - b)[Math.floor((ok.length - 1) / 2)] : null;
     const laps = ok.filter(r => r.time < med + 1.5).slice(-12).map(r => ({ time: r.time, age: r.age, stint: r.stint }));
     const gap = i === 0 ? 0 : gapSecs(L.GapToLeader, ref);
-    return { n, pos: +L.Position || i + 1, gap: started ? (gap ?? i * 1.5) : i * 0.25, out: !!(L.Retired || L.Stopped),
+    return { n, pos: +L.Position || i + 1, gap: started ? (gap ?? i * 1.5) : i * RaceSim.P.gridGap, out: !!(L.Retired || L.Stopped),
       compound: String(st.Compound || 'MEDIUM').toUpperCase(), age: +st.TotalLaps || 0, used: stints.map(x => String(x.Compound || '').toUpperCase()), laps, qbest: q[n] };
   });
   return { lapsLeft: total ? Math.max(0, total - Math.max(cur, 1) + (started ? 1 : 1)) : 50, total, cur, started, status,
@@ -1427,7 +1427,7 @@ function panelRaceCall() {
   return `<div class="ecard pole ${k}"><h4>Race call</h4>
     <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
     <p class="note">${basis} These are chances, not certainties.</p>
-    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 30 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Each figure is corrected to how often that figure came true in those races, checked on a season it wasn't fitted on, so 25% should mean about 1 in 4. Win figures are the roughest (few past cases), and calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
+    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 27 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Each figure is corrected to how often that figure came true in those races, checked on a season it wasn't fitted on, so 25% should mean about 1 in 4. Before the start it also counts the grid place: in 2024–25, cars starting 4th or lower almost never won. Win figures are the roughest (few past cases), and calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
     <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
     <p class="note">Sorted by where each driver is expected to finish. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres that are past their usual life.</p>`;
 }

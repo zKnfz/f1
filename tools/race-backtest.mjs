@@ -14,7 +14,7 @@ if (setArg) for (const kv of setArg.slice(6).split(',')) { const [k, v] = kv.spl
 const quiet = process.argv.includes('--quiet');
 const secs = t => { if (!t) return null; const p = String(t).split(':'); return p.length === 2 ? +p[0] * 60 + +p[1] : +p[0]; };
 const median = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) / 2)]; };
-const CPS = [0, 0.25, 0.5, 0.75, 0.9];
+const CPS = process.env.CPS ? process.env.CPS.split(",").map(Number) : [0, 0.25, 0.5, 0.75, 0.9];
 
 const dir = path.join(ROOT, 'data', 'races');
 const yearArg = process.argv.find(a => a.startsWith('--year='))?.slice(7);
@@ -54,11 +54,11 @@ for (const f of files) {
       return { n: id, pos: k ? (lapT[id]?.[k]?.pos ?? 99) : grid[id], gap: k && !out ? cum[id][k] - lead : 0, out,
         compound: pits.length ? 'HARD' : 'MEDIUM', age: k - lastStop, used: pits.length ? ['MEDIUM', 'HARD'] : ['MEDIUM'], laps, qbest: qbest[id] };
     });
-    if (!k) cars.forEach(c => { c.gap = (c.pos - 1) * 0.25; });
+    if (!k) cars.forEach(c => { c.gap = (c.pos - 1) * RaceSim.P.gridGap; });
     const b = RaceSim.build({ lapsLeft: total - k, sprint: false, started: k > 0, pitLoss, scLoss: pitLoss * 0.55, ref, cars });
     const res = RaceSim.run(b, { runs: 2000 });
     const got = Object.fromEntries(res.cars.map(c => [c.n, c]));
-    if (process.env.DUMP) dump.push({ year: f.slice(0, 4), race: d.name, cp, cars: Object.keys(finish).map(id => ({ p: got[id] ? { win: got[id].win, top3: got[id].top3, top5: got[id].top5, top10: got[id].top10 } : { win: 0, top3: 0, top5: 0, top10: 0 }, o: finish[id].order })) });
+    if (process.env.DUMP) dump.push({ year: f.slice(0, 4), race: d.name, cp, cars: Object.keys(finish).map(id => ({ p: got[id] ? { win: got[id].win, top3: got[id].top3, top5: got[id].top5, top10: got[id].top10 } : { win: 0, top3: 0, top5: 0, top10: 0 }, o: finish[id].order, g: got[id]?.pos ?? 25 })) });
     for (const id of Object.keys(finish)) {
       const p = got[id] || { win: 0, top3: 0, top5: 0, top10: 0 }, o = finish[id].order;
       if (process.env.DBG && ((p.top10 > 0.9 && o > 10) || (p.top5 > 0.9 && o > 5) || (p.top10 < 0.1 && o <= 10))) { const c = b.cars.find(x => x.n === id); console.log(d.name.slice(0, 12), cp, id, "top5", p.top5.toFixed(2), "top10", p.top10.toFixed(2), "got P" + o, "status", d.results.find(r => r.Driver.driverId === id).status, "posNow", c?.pos, "gap", c?.gap?.toFixed(1), "owed", c?.owed, "pace", c?.pace?.toFixed(2)); }

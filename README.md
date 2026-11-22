@@ -84,7 +84,8 @@ rather than what a browser caught live (the live capture can be wrong):
 
 The figures are corrected so that 25% means about 1 in 4: `tools/race-calibrate.mjs` learns,
 for each market before the start and during the race, how often each figure actually came true
-in 2024–25, and the result is stored as `CAL` in `racesim.js`:
+in 2024–25 (before the start it also uses the grid place), and the result is stored as `CAL` in
+`racesim.js`:
 
 ```bash
 DUMP=data/race-raw.json node tools/race-backtest.mjs --year=2024,2025 --quiet --set=cal=0,temp=1
