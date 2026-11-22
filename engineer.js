@@ -94,6 +94,28 @@ es.addEventListener('feed', e => {
 });
 es.addEventListener('full', () => { for (const k in lapTrack) delete lapTrack[k]; });
 
+// Sector times per lap for every driver, kept from when the page opened, so two drivers can be
+// compared sector by sector as each lap happens rather than only once it is finished.
+// secLog[n][lap] = [s1, s2, s3]
+const secLog = {}, secLap = {};
+es.addEventListener('feed', e => {
+  const [topic, data] = e.detail;
+  if (topic !== 'TimingData' || !data?.Lines) return;
+  for (const [n, u] of Object.entries(data.Lines)) {
+    for (const [k, sec] of Object.entries(u?.Sectors || {})) {
+      const i = Number(k), v = lapSecs(sec?.Value);
+      if (!(i >= 0 && i < 3) || !v) continue;
+      // Sector 1 opens a lap: the one after the laps completed so far.
+      if (i === 0) secLap[n] = (+L_()[n]?.NumberOfLaps || 0) + 1;
+      const lap = secLap[n];
+      if (!lap) continue;
+      ((secLog[n] ??= {})[lap] ??= [null, null, null])[i] = v;
+      if (n === selected || n === engCompare) engDirty = true;
+    }
+  }
+});
+es.addEventListener('full', () => { for (const k in secLap) delete secLap[k]; });
+
 // Speed at the first intermediate this lap, tracked the same way, to spot laps where a
 // driver is not pushing before any sector time is in.
 const i1Track = {};
@@ -1466,6 +1488,61 @@ function panelRaceCall() {
     <p class="note">In the order they are running now (the grid before the start). Green is 70% or more, yellow 10–30%. ${tr ? `▲▼ is how many points a figure moved since lap ${tr.lap}.` : 'Arrows showing how each figure moves appear once the race is a lap or two old.'} Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
 }
 
+// Head to head: the two drivers' sectors lap by lap, the lap in progress first, and in a race
+// the gap between them and how fast it is changing.
+function h2hHtml(a, b) {
+  const la = secLog[a] || {}, lb = secLog[b] || {};
+  const lapT = (n, l) => (hist.laps[n] || []).find(r => r.lap === l)?.time ?? null;
+  const laps = [...new Set([...Object.keys(la), ...Object.keys(lb)].map(Number))].sort((x, y) => y - x).slice(0, 5);
+  const ca = dInfo(a).code, cb = dInfo(b).code;
+  // Who is quicker and by how much, as a cell.
+  const who = (x, y) => {
+    if (x == null || y == null) return '<td class="mono t dimt">–</td>';
+    const d = x - y;
+    if (Math.abs(d) < 0.0005) return '<td class="mono t dimt">level</td>';
+    return `<td class="mono t ${d < 0 ? 'c-green' : 'c-red'}" title="${ca} ${fmtLapT(x)} · ${cb} ${fmtLapT(y)}">${d < 0 ? ca : cb} ${Math.abs(d).toFixed(3)}</td>`;
+  };
+  let live = '';
+  const rows = laps.map(l => {
+    const sa = la[l] || [], sb = lb[l] || [];
+    const ta = lapT(a, l), tb = lapT(b, l);
+    const done = [0, 1, 2].filter(i => sa[i] != null && sb[i] != null);
+    // Running total over the sectors both have done this lap: the earliest read on the lap.
+    const sumA = done.reduce((s, i) => s + sa[i], 0), sumB = done.reduce((s, i) => s + sb[i], 0);
+    const inProgress = ta == null || tb == null;
+    if (!live && inProgress && done.length) {
+      const d = sumA - sumB, last = Math.max(...done) + 1;
+      live = Math.abs(d) < 0.0005 ? `Lap ${l}: level after S${last}` : `Lap ${l}: <b class="${d < 0 ? 'c-green' : 'c-red'}">${d < 0 ? ca : cb} quicker by ${Math.abs(d).toFixed(3)}</b> after S${last}`;
+    }
+    return `<tr${inProgress ? ' class="h2hlive"' : ''}><td class="mono">${l}${inProgress ? ' <span class="dimt">now</span>' : ''}</td>${[0, 1, 2].map(i => who(sa[i], sb[i])).join('')}${who(ta ?? (done.length === 3 ? sumA : null), tb ?? (done.length === 3 ? sumB : null))}</tr>`;
+  }).join('');
+  // Gap between them in a race, and its change per lap over the last 3 laps.
+  let gapTxt = '';
+  if (sessionKind() === 'race') {
+    const ref = refLap(), gNow = n => (+L_()[n]?.Position === 1 ? 0 : gapSecs(L_()[n]?.GapToLeader, ref));
+    const gA = gNow(a), gB = gNow(b);
+    if (gA != null && gB != null) {
+      const ahead = gA <= gB ? a : b, behind = ahead === a ? b : a, gap = Math.abs(gB - gA);
+      const at = (n, l) => { const r = (hist.laps[n] || []).find(x => x.lap === l); return r ? (+L_()[n]?.Position === 1 && !r.gap ? 0 : gapSecs(r.gap, ref)) : null; };
+      const lastLap = Math.max(...(hist.laps[a] || []).map(r => r.lap || 0), 0);
+      const g0a = at(a, lastLap - 3), g0b = at(b, lastLap - 3), g1a = at(a, lastLap), g1b = at(b, lastLap);
+      let trend = '';
+      if ([g0a, g0b, g1a, g1b].every(v => v != null)) {
+        const per = (Math.abs(g1b - g1a) - Math.abs(g0b - g0a)) / 3; // + = gap growing
+        if (Math.abs(per) >= 0.05) {
+          const closing = per < 0, laps = closing ? Math.ceil(gap / -per) : null;
+          trend = closing ? ` · <b class="c-yellow">${dInfo(behind).code} closing ${(-per).toFixed(2)}s a lap</b>${laps && laps < 60 ? ` (catches in ~${laps} laps)` : ''}` : ` · <b>${dInfo(ahead).code} pulling away ${per.toFixed(2)}s a lap</b>`;
+        } else trend = ' · gap steady';
+      }
+      gapTxt = `<div class="h2hgap">${chipD(ahead)} is <b class="mono">${gap.toFixed(1)}s</b> ahead of ${chipD(behind)}${trend}</div>`;
+    }
+  }
+  if (!rows) return `<div class="h2h">${gapTxt}<p class="note">Sector by sector comparison starts with the next sector times (kept from when this page opened).</p></div>`;
+  return `<div class="h2h">${gapTxt}<div class="h2hnow">${live || 'Waiting for both to set a sector this lap…'}</div>
+    <table class="et h2ht"><thead><tr><th>Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t">S3</th><th class="t">Lap</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="note">Each cell names who was quicker and by how much (hover for both times). The lap in progress updates after every sector.</p></div>`;
+}
+
 function panelLaps(n) {
   const kind = sessionKind();
   const series = [n, engCompare && engCompare !== n ? engCompare : null].filter(Boolean)
@@ -1503,7 +1580,8 @@ function panelLaps(n) {
     const st = stintsOf(s.n).at(-1); const p = st && stintPace(st.laps, best);
     return `<div>${chipD(s.n)} last 5 clean laps <b class="mono">${fmtLapT(avg)}</b> · wear this stint <b class="mono">${p?.deg != null ? signed(p.deg, 3) + ' s/lap' : '–'}</b></div>`;
   }).join('');
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${g}</svg><div class="lsum">${summary}</div>
+  const h2h = series.length === 2 ? h2hHtml(series[0].n, series[1].n) : '';
+  return `${h2h}<svg class="chart" viewBox="0 0 ${W} ${H}">${g}</svg><div class="lsum">${summary}</div>
     <p class="note">Dots are colored by tyre. Hollow dots are pit laps or laps under flags. Very slow laps sit on the top edge.</p>`;
 }
 

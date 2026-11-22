@@ -237,6 +237,11 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .chart .ax{fill:#5b6170;font-size:11px;font-family:"JetBrains Mono",monospace}
 .lsum{display:flex;flex-wrap:wrap;gap:6px 24px;margin:10px 0;font-size:12px;color:var(--muted)}
 .lsum b{color:var(--text);font-weight:500}
+.h2h{margin:0 0 12px;padding:10px 12px;background:#141823;border:1px solid var(--line);border-radius:8px}
+.h2hgap{font-size:13px;margin-bottom:6px} .h2hnow{font-size:14px;margin-bottom:8px}
+.et.h2ht{width:auto;min-width:min(100%,460px)} .et.h2ht td,.et.h2ht th{white-space:nowrap} .et.h2ht th.t,.et.h2ht td.t{padding-left:14px}
+.et.h2ht tr.h2hlive td{background:#1a2030}
+@media (max-width:640px){.h2h{padding:8px} .et.h2ht{min-width:0;width:100%;font-size:10px} .et.h2ht td,.et.h2ht th{padding:5px 2px} .et.h2ht th.t,.et.h2ht td.t{padding-left:4px} .h2hnow{font-size:13px}}
 .strat{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
 .srow{display:grid;grid-template-columns:64px 1fr;align-items:center;gap:8px}
 .sbar{position:relative;display:flex;gap:2px;height:18px;background:#1a1d24;border-radius:4px;overflow:hidden}
@@ -372,7 +377,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=45"></script>
+<script src="direct.js?v=46"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -866,8 +871,8 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="racesim.js?v=45"></script>
-<script src="engineer.js?v=45"></script>
-<script src="rain.js?v=45"></script>
+<script src="racesim.js?v=46"></script>
+<script src="engineer.js?v=46"></script>
+<script src="rain.js?v=46"></script>
 </body>
 </html>
