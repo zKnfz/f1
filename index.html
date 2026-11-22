@@ -190,12 +190,13 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .rcwrap{overflow-x:auto}
 .et.rc{width:auto;min-width:100%;max-width:760px}
 .et.rc td{white-space:nowrap} .et.rc .rcplan{font-size:11.5px}
-.et.rc th.t,.et.rc td.t{width:64px;padding-left:10px}
+.et.rc th.t,.et.rc td.t{width:78px;padding-left:10px}
+.et.rc .rctr{display:inline-block;min-width:26px;text-align:left;font-size:9.5px;margin-left:3px}
 .et.rc th:nth-child(-n+2),.et.rc td:nth-child(-n+2){width:44px}
 .et.rc .rcmv{font-size:9.5px;margin-left:4px}
 .et.rc tr.rcout td{opacity:.45}
 .rcabout{margin:2px 0 6px} .rcabout summary{cursor:pointer;color:var(--muted);font-size:12px;margin-bottom:6px}
-@media (max-width:640px){.et.rc .rcplan{display:none} .et.rc th.t,.et.rc td.t{width:auto;padding-left:4px} .et.rc .rcmv{display:none}}
+@media (max-width:640px){.et.rc .rcplan{display:none} .et.rc th.t,.et.rc td.t{width:auto;padding-left:4px} .et.rc .rcmv{display:none} .et.rc .rctr{min-width:0;font-size:8.5px;margin:1px 0 0;display:block;line-height:1;text-align:right;min-height:9px} .et.rc td{vertical-align:top}}
 .pjclock{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;color:var(--muted);font-size:12px}
 .pjclock b{font-size:24px;color:var(--text)} .pjclock b.c-red{color:var(--red)} .pjclock b.c-yellow{color:var(--yellow)} .pjclock b.dimt{color:var(--dim)}
 .ecard.pole{margin-bottom:12px;border-left:3px solid #55607a}
@@ -371,7 +372,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=44"></script>
+<script src="direct.js?v=45"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -865,8 +866,8 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 </script>
-<script src="racesim.js?v=44"></script>
-<script src="engineer.js?v=44"></script>
-<script src="rain.js?v=44"></script>
+<script src="racesim.js?v=45"></script>
+<script src="engineer.js?v=45"></script>
+<script src="rain.js?v=45"></script>
 </body>
 </html>

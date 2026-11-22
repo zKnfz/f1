@@ -1402,6 +1402,26 @@ function raceRecordHtml() {
   return `<p class="note polerec"><b>Track record</b> · favourite to win was right: ${fav}.<br>Top 3 said ${band(3, 3) || '–'}. Top 5 said ${band(1, 5) || '–'}. Top 10 said ${band(2, 10) || '–'}.${done.length < 15 ? ' Too few races so far to judge it.' : ''}</p>`;
 }
 
+// Trend: each lap's chances are kept (in this browser, per race) so the table can show how
+// much each figure moved over the last few laps.
+const RACE_TREND = 'pitwall-rtrend-v1', TREND_LAPS = 3;
+let raceTrend = null, trendSaved = 0;
+function trendFor(r) {
+  const key = hist.key, cur = r.inp.cur;
+  if (raceTrend?.k !== key) {
+    try { const d = JSON.parse(localStorage.getItem(RACE_TREND)); raceTrend = d?.k === key ? d : null; } catch {}
+    raceTrend ??= { k: key, laps: {} };
+  }
+  if (!r.inp.started || r.settled || !cur) return null;
+  // The latest figures for this lap stand for the lap (so a finished lap keeps its end value).
+  raceTrend.laps[cur] = Object.fromEntries(r.cars.map(c => [c.n, [c.win, c.top3, c.top5, c.top10].map(x => Math.round(x * 1000) / 1000)]));
+  if (Date.now() - trendSaved > 10000) { trendSaved = Date.now(); try { localStorage.setItem(RACE_TREND, JSON.stringify(raceTrend)); } catch {} }
+  // Compare with the last lap at least TREND_LAPS ago, or the oldest kept lap if the page joined late.
+  const laps = Object.keys(raceTrend.laps).map(Number).filter(l => l < cur).sort((a, b) => a - b);
+  const base = laps.filter(l => l <= cur - TREND_LAPS).at(-1) ?? laps[0];
+  return base == null ? null : { lap: base, p: raceTrend.laps[base] };
+}
+
 function panelRaceCall() {
   const r = raceCall();
   if (!r) return '<p class="note">Waiting for timing data…</p>';
@@ -1417,14 +1437,17 @@ function panelRaceCall() {
   else if (top.win >= 0.7) { verdict = 'strong favourite to win'; k = 'hi'; }
   else if (top.win >= 0.45) { verdict = 'favourite to win'; k = 'mid'; }
   else { verdict = 'open race: no clear favourite'; k = 'lo'; }
+  const tr = trendFor(r);
   const rows = cars.map(c => {
     const d = r.byN[c.n] || {}, L = L_()[c.n] || {}, out = L.Retired || L.Stopped;
     const moved = d.grid && inp.started && !out ? d.grid - c.pos : 0;
     const mv = moved > 0 ? `<span class="c-green rcmv">▲${moved}</span>` : moved < 0 ? `<span class="c-red rcmv">▼${-moved}</span>` : '';
     const plan = r.settled ? '' : out ? '<span class="dimt">out</span>' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
-    const cell = x => `<td class="mono t ${cls(x)}">${pct(x)}%</td>`;
+    const was = tr?.p[c.n];
+    const arrow = i => { if (!was) return ''; const d = Math.round(([c.win, c.top3, c.top5, c.top10][i] - was[i]) * 100); return Math.abs(d) < 2 ? '<span class="rctr"></span>' : `<span class="rctr ${d > 0 ? 'c-green' : 'c-red'}">${d > 0 ? '▲' : '▼'}${Math.abs(d)}</span>`; };
+    const cell = (x, i) => `<td class="mono t ${cls(x)}">${pct(x)}%${arrow(i)}</td>`;
     return `<tr class="${c.n === selected ? 'selrow' : ''}${out ? ' rcout' : ''}"><td class="mono">${out ? 'OUT' : 'P' + c.pos}${mv}</td><td class="mono dimt">${d.grid || '–'}</td><td>${chipD(c.n)}</td>
-      ${cell(c.win)}${cell(c.top3)}${cell(c.top5)}${cell(c.top10)}<td class="rcplan">${plan}</td></tr>`;
+      ${cell(c.win, 0)}${cell(c.top3, 1)}${cell(c.top5, 2)}${cell(c.top10, 3)}<td class="rcplan">${plan}</td></tr>`;
   }).join('');
   const lapTxt = inp.total ? (inp.started ? `Lap ${inp.cur} of ${inp.total}` : `Before the start · ${inp.total} laps`) : '';
   const early = !inp.started || inp.cur < Math.max(6, inp.total * 0.15);
@@ -1440,7 +1463,7 @@ function panelRaceCall() {
       <p class="note">The favourite to win won 27 of 48 from the grid, 42 of 48 at half distance and 44 of 48 at 90% distance. Win figures are the roughest, and calls from the grid are the least reliable. These are chances, not certainties.</p>
     </details>${raceRecordHtml()}</div>
     <div class="rcwrap"><table class="et rc"><thead><tr><th>Now</th><th>Grid</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th class="rcplan">Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="note">In the order they are running now (the grid before the start). Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
+    <p class="note">In the order they are running now (the grid before the start). Green is 70% or more, yellow 10–30%. ${tr ? `▲▼ is how many points a figure moved since lap ${tr.lap}.` : 'Arrows showing how each figure moves appear once the race is a lap or two old.'} Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
 }
 
 function panelLaps(n) {
