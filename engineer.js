@@ -1325,7 +1325,10 @@ function raceInputs() {
     const med = ok.length ? ok.map(r => r.time).sort((a, b) => a - b)[Math.floor((ok.length - 1) / 2)] : null;
     const laps = ok.filter(r => r.time < med + 1.5).slice(-12).map(r => ({ time: r.time, age: r.age, stint: r.stint }));
     const gap = i === 0 ? 0 : gapSecs(L.GapToLeader, ref);
-    return { n, pos: +L.Position || i + 1, gap: started ? (gap ?? i * 1.5) : i * RaceSim.P.gridGap, out: !!(L.Retired || L.Stopped),
+    // Before the start the feed's running order shuffles as cars leave the pits, so the
+    // starting grid (GridPos) is used instead.
+    const grid = +app[n]?.GridPos || null;
+    return { n, grid, pos: started ? +L.Position || i + 1 : grid || +L.Position || i + 1, gap: started ? (gap ?? i * 1.5) : ((grid || i + 1) - 1) * RaceSim.P.gridGap, out: !!(L.Retired || L.Stopped),
       compound: String(st.Compound || 'MEDIUM').toUpperCase(), age: +st.TotalLaps || 0, used: stints.map(x => String(x.Compound || '').toUpperCase()), laps, qbest: q[n] };
   });
   return { lapsLeft: total ? Math.max(0, total - Math.max(cur, 1) + (started ? 1 : 1)) : 50, total, cur, started, status,
@@ -1405,31 +1408,39 @@ function panelRaceCall() {
   const { inp } = r;
   const pct = x => { const v = Math.round(x * 100); return r.settled ? v : x >= 0.995 ? '>99' : x > 0 && x < 0.005 ? '<1' : v; };
   const cls = x => r.settled ? (x ? 'c-green' : 'dimt') : x >= 0.7 ? 'c-green' : x >= 0.3 ? '' : x >= 0.1 ? 'c-yellow' : 'dimt';
-  const cars = r.cars.slice().sort((a, b) => a.avg - b.avg);
-  const top = cars.slice().sort((a, b) => b.win - a.win)[0];
+  // Rows in starting-grid order; the "Now" column shows where each driver is running.
+  const gridOf = c => r.byN[c.n]?.grid || 99;
+  const cars = r.cars.slice().sort((a, b) => gridOf(a) - gridOf(b) || a.pos - b.pos);
+  const top = r.cars.slice().sort((a, b) => b.win - a.win)[0];
   let verdict, k;
   if (r.settled) { verdict = 'won the race'; k = 'hi'; }
   else if (top.win >= 0.7) { verdict = 'strong favourite to win'; k = 'hi'; }
   else if (top.win >= 0.45) { verdict = 'favourite to win'; k = 'mid'; }
   else { verdict = 'open race: no clear favourite'; k = 'lo'; }
   const rows = cars.map(c => {
-    const d = r.byN[c.n] || {}, L = L_()[c.n] || {};
-    const plan = r.settled ? '' : L.Retired || L.Stopped ? 'out' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
-    return `<tr class="${c.n === selected ? 'selrow' : ''}"><td class="mono">P${c.pos}</td><td>${chipD(c.n)}</td>
-      <td class="mono t ${cls(c.win)}">${pct(c.win)}%</td><td class="mono t ${cls(c.top3)}">${pct(c.top3)}%</td><td class="mono t ${cls(c.top5)}">${pct(c.top5)}%</td><td class="mono t ${cls(c.top10)}">${pct(c.top10)}%</td><td class="rcplan">${plan}</td></tr>`;
+    const d = r.byN[c.n] || {}, L = L_()[c.n] || {}, out = L.Retired || L.Stopped;
+    const moved = d.grid && inp.started && !out ? d.grid - c.pos : 0;
+    const mv = moved > 0 ? `<span class="c-green rcmv">▲${moved}</span>` : moved < 0 ? `<span class="c-red rcmv">▼${-moved}</span>` : '';
+    const plan = r.settled ? '' : out ? '<span class="dimt">out</span>' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
+    const cell = x => `<td class="mono t ${cls(x)}">${pct(x)}%</td>`;
+    return `<tr class="${c.n === selected ? 'selrow' : ''}${out ? ' rcout' : ''}"><td class="mono dimt">${d.grid || '–'}</td><td class="mono">${out ? 'OUT' : 'P' + c.pos}${mv}</td><td>${chipD(c.n)}</td>
+      ${cell(c.win)}${cell(c.top3)}${cell(c.top5)}${cell(c.top10)}<td class="rcplan">${plan}</td></tr>`;
   }).join('');
   const lapTxt = inp.total ? (inp.started ? `Lap ${inp.cur} of ${inp.total}` : `Before the start · ${inp.total} laps`) : '';
   const early = !inp.started || inp.cur < Math.max(6, inp.total * 0.15);
   const qn = Object.keys(qualiPace()).length;
   const basis = r.settled ? 'Race over.'
-    : `${lapTxt} · the rest of the race played out ${RaceSim.P.runs.toLocaleString()} times. Includes pit stops still to make, tyre wear, a <b>${Math.round(r.sc * 100)}%</b> chance of a safety car and the chance of retirements.`
-      + (early ? ` <b>Early:</b> mostly ${inp.started ? 'the order and ' : 'grid order and '}${qn ? 'qualifying pace' : 'little else (no qualifying pace saved)'}, so these move a lot in the first laps.` : '');
+    : `<b>${lapTxt}</b> · ${Math.round(r.sc * 100)}% chance of a safety car`
+      + (early ? `<br><b>Early:</b> mostly ${inp.started ? 'the order and ' : 'the grid and '}${qn ? 'qualifying pace' : 'little else (no qualifying pace saved)'}, so these move a lot in the first laps.` : '');
   return `<div class="ecard pole ${k}"><h4>Race call</h4>
     <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
-    <p class="note">${basis} These are chances, not certainties.</p>
-    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 27 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Each figure is corrected to how often that figure came true in those races, checked on a season it wasn't fitted on, so 25% should mean about 1 in 4. Before the start it also counts the grid place: in 2024–25, cars starting 4th or lower almost never won. Win figures are the roughest (few past cases), and calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
-    <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="note">Sorted by where each driver is expected to finish. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres that are past their usual life.</p>`;
+    <p class="note">${basis}</p>
+    <details class="rcabout"><summary>How it works and how well it has done</summary>
+      <p class="note">The rest of the race is played out ${RaceSim.P.runs.toLocaleString()} times, with pit stops still to make, tyre wear, safety cars and retirements. Each figure is corrected to how often that figure came true in the 48 races of 2024 and 2025 (checked on a season it wasn't fitted on), so 25% should mean about 1 in 4. Before the start it also counts the grid place: cars starting 4th or lower almost never won.</p>
+      <p class="note">The favourite to win won 27 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Win figures are the roughest, and calls from the grid are the least reliable. These are chances, not certainties.</p>
+    </details>${raceRecordHtml()}</div>
+    <div class="rcwrap"><table class="et rc"><thead><tr><th>Grid</th><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th class="rcplan">Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="note">In starting-grid order. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
 }
 
 function panelLaps(n) {
