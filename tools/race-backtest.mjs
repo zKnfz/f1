@@ -21,6 +21,7 @@ const yearArg = process.argv.find(a => a.startsWith('--year='))?.slice(7);
 const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && (!yearArg || yearArg.split(',').some(y => f.startsWith(y + '-')))).sort();
 const rows = []; // { cp, market, p, hit }
 const favs = {};
+const dump = [];
 for (const f of files) {
   const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
   const total = +d.results[0].laps;
@@ -57,6 +58,7 @@ for (const f of files) {
     const b = RaceSim.build({ lapsLeft: total - k, sprint: false, started: k > 0, pitLoss, scLoss: pitLoss * 0.55, ref, cars });
     const res = RaceSim.run(b, { runs: 2000 });
     const got = Object.fromEntries(res.cars.map(c => [c.n, c]));
+    if (process.env.DUMP) dump.push({ year: f.slice(0, 4), race: d.name, cp, cars: Object.keys(finish).map(id => ({ p: got[id] ? { win: got[id].win, top3: got[id].top3, top5: got[id].top5, top10: got[id].top10 } : { win: 0, top3: 0, top5: 0, top10: 0 }, o: finish[id].order })) });
     for (const id of Object.keys(finish)) {
       const p = got[id] || { win: 0, top3: 0, top5: 0, top10: 0 }, o = finish[id].order;
       if (process.env.DBG && ((p.top10 > 0.9 && o > 10) || (p.top5 > 0.9 && o > 5) || (p.top10 < 0.1 && o <= 10))) { const c = b.cars.find(x => x.n === id); console.log(d.name.slice(0, 12), cp, id, "top5", p.top5.toFixed(2), "top10", p.top10.toFixed(2), "got P" + o, "status", d.results.find(r => r.Driver.driverId === id).status, "posNow", c?.pos, "gap", c?.gap?.toFixed(1), "owed", c?.owed, "pace", c?.pace?.toFixed(2)); }
@@ -81,3 +83,4 @@ for (const m of ['win', 'top3', 'top5', 'top10']) {
 }
 const tot = ['win', 'top5', 'top10'].reduce((a, m) => a + ll(rows.filter(r => r.m === m)), 0);
 console.log('SCORE ' + JSON.stringify({ logloss: +tot.toFixed(4), races: files.length }));
+if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, JSON.stringify(dump));

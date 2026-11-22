@@ -82,6 +82,18 @@ on the card.
 Once qualifying is over, save the official qualifying times so the pre-race call uses them
 rather than what a browser caught live (the live capture can be wrong):
 
+The figures are corrected so that 25% means about 1 in 4: `tools/race-calibrate.mjs` learns,
+for each market before the start and during the race, how often each figure actually came true
+in 2024–25, and the result is stored as `CAL` in `racesim.js`:
+
+```bash
+DUMP=data/race-raw.json node tools/race-backtest.mjs --year=2024,2025 --quiet --set=cal=0,temp=1
+```
+
+```bash
+node tools/race-calibrate.mjs data/race-raw.json
+```
+
 ```bash
 node tools/fetch-qpace.mjs <year> <round> <meetingKey>
 ```

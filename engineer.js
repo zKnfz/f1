@@ -1427,7 +1427,7 @@ function panelRaceCall() {
   return `<div class="ecard pole ${k}"><h4>Race call</h4>
     <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
     <p class="note">${basis} These are chances, not certainties.</p>
-    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 30 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Top 3 chances of 70–90% came true 80% of the time, top 10 chances 87%. Calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
+    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 30 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Each figure is corrected to how often that figure came true in those races, checked on a season it wasn't fitted on, so 25% should mean about 1 in 4. Win figures are the roughest (few past cases), and calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
     <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
     <p class="note">Sorted by where each driver is expected to finish. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres that are past their usual life.</p>`;
 }
