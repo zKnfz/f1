@@ -1,9 +1,11 @@
 {
  "files": {
   "pitwall-model-v3-152-other": 135,
-  "pitwall-calib-v1": 275,
-  "pitwall-score-v1-1300": 275,
-  "pitwall-qpace-1300": 1000
+  "pitwall-calib-v1": 2135,
+  "pitwall-score-v1-1300": 2134,
+  "pitwall-qpace-1300": 1000,
+  "pitwall-model-v4-152-race": 692,
+  "pitwall-race-v1": 5
  },
- "updated": "2026-11-22T03:43:05.735Z"
+ "updated": "2026-11-22T05:37:51.106Z"
 }
