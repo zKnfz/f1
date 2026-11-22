@@ -1408,9 +1408,9 @@ function panelRaceCall() {
   const { inp } = r;
   const pct = x => { const v = Math.round(x * 100); return r.settled ? v : x >= 0.995 ? '>99' : x > 0 && x < 0.005 ? '<1' : v; };
   const cls = x => r.settled ? (x ? 'c-green' : 'dimt') : x >= 0.7 ? 'c-green' : x >= 0.3 ? '' : x >= 0.1 ? 'c-yellow' : 'dimt';
-  // Rows in starting-grid order; the "Now" column shows where each driver is running.
-  const gridOf = c => r.byN[c.n]?.grid || 99;
-  const cars = r.cars.slice().sort((a, b) => gridOf(a) - gridOf(b) || a.pos - b.pos);
+  // Rows in running order (the grid before the start); cars that are out go to the bottom.
+  const outOf = c => { const L = L_()[c.n] || {}; return L.Retired || L.Stopped ? 1 : 0; };
+  const cars = r.cars.slice().sort((a, b) => outOf(a) - outOf(b) || a.pos - b.pos);
   const top = r.cars.slice().sort((a, b) => b.win - a.win)[0];
   let verdict, k;
   if (r.settled) { verdict = 'won the race'; k = 'hi'; }
@@ -1423,7 +1423,7 @@ function panelRaceCall() {
     const mv = moved > 0 ? `<span class="c-green rcmv">▲${moved}</span>` : moved < 0 ? `<span class="c-red rcmv">▼${-moved}</span>` : '';
     const plan = r.settled ? '' : out ? '<span class="dimt">out</span>' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
     const cell = x => `<td class="mono t ${cls(x)}">${pct(x)}%</td>`;
-    return `<tr class="${c.n === selected ? 'selrow' : ''}${out ? ' rcout' : ''}"><td class="mono dimt">${d.grid || '–'}</td><td class="mono">${out ? 'OUT' : 'P' + c.pos}${mv}</td><td>${chipD(c.n)}</td>
+    return `<tr class="${c.n === selected ? 'selrow' : ''}${out ? ' rcout' : ''}"><td class="mono">${out ? 'OUT' : 'P' + c.pos}${mv}</td><td class="mono dimt">${d.grid || '–'}</td><td>${chipD(c.n)}</td>
       ${cell(c.win)}${cell(c.top3)}${cell(c.top5)}${cell(c.top10)}<td class="rcplan">${plan}</td></tr>`;
   }).join('');
   const lapTxt = inp.total ? (inp.started ? `Lap ${inp.cur} of ${inp.total}` : `Before the start · ${inp.total} laps`) : '';
@@ -1436,11 +1436,11 @@ function panelRaceCall() {
     <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
     <p class="note">${basis}</p>
     <details class="rcabout"><summary>How it works and how well it has done</summary>
-      <p class="note">The rest of the race is played out ${RaceSim.P.runs.toLocaleString()} times, with pit stops still to make, tyre wear, safety cars and retirements. Each figure is corrected to how often that figure came true in the 48 races of 2024 and 2025 (checked on a season it wasn't fitted on), so 25% should mean about 1 in 4. Before the start it also counts the grid place: cars starting 4th or lower almost never won.</p>
-      <p class="note">The favourite to win won 27 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Win figures are the roughest, and calls from the grid are the least reliable. These are chances, not certainties.</p>
+      <p class="note">The rest of the race is played out ${RaceSim.P.runs.toLocaleString()} times, with pit stops still to make, tyre wear, safety cars and retirements. Each figure is corrected to how often that figure came true in the 48 races of 2024 and 2025 (checked on a season it wasn't fitted on), so 25% should mean about 1 in 4. It also counts where the car is (the grid before the start): a car further back wins less often than the same figure from the front.</p>
+      <p class="note">The favourite to win won 27 of 48 from the grid, 42 of 48 at half distance and 44 of 48 at 90% distance. Win figures are the roughest, and calls from the grid are the least reliable. These are chances, not certainties.</p>
     </details>${raceRecordHtml()}</div>
-    <div class="rcwrap"><table class="et rc"><thead><tr><th>Grid</th><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th class="rcplan">Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="note">In starting-grid order. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
+    <div class="rcwrap"><table class="et rc"><thead><tr><th>Now</th><th>Grid</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th class="rcplan">Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="note">In the order they are running now (the grid before the start). Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres past their usual life.</p>`;
 }
 
 function panelLaps(n) {

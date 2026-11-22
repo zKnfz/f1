@@ -34,20 +34,13 @@
   };
 
   // Correction learned from the 2024 and 2025 races (tools/race-calibrate.mjs), so a figure
-  // means how often such a figure came true. Before the start: logistic of
-  // [1, log-odds of the figure, log of grid place] (a car further back wins less often than the
-  // same figure from the front row). During the race: pairs of [figure, how often it came true],
-  // read off the straight line between two pairs.
-  const CAL = {"pre":{"win":[0.91,0.98,-1.081],"top3":[1.894,0.296,-1.847],"top5":[2.932,0.371,-1.912],"top10":[3.289,0.446,-1.472]},"race":{"win":[[0,0],[0,0.0014],[0.0008,0.0061],[0.0021,0.0103],[0.0092,0.0116],[0.0319,0.0459],[0.085,0.0594],[0.2114,0.0909],[0.3332,0.3636],[0.3601,0.472],[0.4453,0.5257],[0.5761,0.6507],[0.6447,0.7705],[0.7169,0.828],[0.8933,0.8776],[0.9778,0.9333],[0.9875,0.9925]],"top3":[[0,0],[0,0.003],[0.0007,0.009],[0.0103,0.0139],[0.0191,0.033],[0.0411,0.0589],[0.0857,0.0661],[0.1256,0.1377],[0.1569,0.1579],[0.2126,0.2246],[0.2594,0.2507],[0.3232,0.2802],[0.3847,0.3252],[0.4645,0.5342],[0.6396,0.6635],[0.7485,0.6939],[0.8413,0.7983],[0.9079,0.8525],[0.9367,0.8714],[0.9526,0.9184],[0.9693,0.9154],[0.9847,0.9391],[0.9895,0.9644],[0.9955,0.9966]],"top5":[[0,0],[0,0.0038],[0,0.0137],[0.0005,0.0147],[0.0073,0.037],[0.0504,0.0547],[0.1359,0.0982],[0.2272,0.1258],[0.2696,0.2381],[0.2937,0.2441],[0.3567,0.339],[0.4327,0.3645],[0.4708,0.4942],[0.5324,0.5563],[0.6078,0.7426],[0.6352,0.7453],[0.7316,0.8092],[0.8373,0.814],[0.8832,0.8372],[0.9094,0.8834],[0.9339,0.8907],[0.9528,0.9034],[0.9726,0.9041],[0.9835,0.9289],[0.9884,0.9525],[0.9934,0.9978]],"top10":[[0,0],[0,0.0137],[0,0.0166],[0,0.0185],[0.0003,0.0192],[0.0044,0.051],[0.0145,0.0817],[0.039,0.0957],[0.0742,0.1111],[0.1016,0.1304],[0.187,0.1842],[0.2647,0.2946],[0.3242,0.3298],[0.3822,0.4249],[0.4493,0.4937],[0.5771,0.5302],[0.679,0.6132],[0.7226,0.6866],[0.764,0.7604],[0.7748,0.7703],[0.7973,0.7878],[0.8247,0.8531],[0.8538,0.86],[0.9046,0.8983],[0.9279,0.9007],[0.9434,0.9105],[0.9603,0.93],[0.9704,0.9311],[0.982,0.956],[0.988,0.96],[0.991,0.9627],[0.9944,0.9976]]}};
+  // means how often such a figure came true. Before the start and during the race (fitted
+  // separately): logistic of [1, log-odds of the figure, log of the place: grid slot before the
+  // start, running position after]. A car further back wins less often than the same figure
+  // from the front.
+  const CAL = {"pre":{"win":[0.91,0.98,-1.081],"top3":[1.894,0.296,-1.847],"top5":[2.932,0.371,-1.912],"top10":[3.289,0.446,-1.472]},"race":{"win":[0.582,0.646,-1.325],"top3":[1.961,0.439,-1.657],"top5":[3.109,0.417,-1.872],"top10":[4.243,0.456,-1.827]}};
   const lo = p => { p = Math.min(1 - 1e-4, Math.max(1e-4, p)); return Math.log(p / (1 - p)); };
-  const calRead = (k, p) => {
-    if (p <= k[0][0]) return k[0][1] * p / Math.max(k[0][0], 1e-6);
-    const last = k[k.length - 1];
-    if (p >= last[0]) return last[1] + (p - last[0]) * (1 - last[1]) / Math.max(1e-6, 1 - last[0]);
-    for (let i = 1; i < k.length; i++) if (p <= k[i][0]) { const [x0, y0] = k[i - 1], [x1, y1] = k[i]; return y0 + (y1 - y0) * (p - x0) / (x1 - x0); }
-  };
-  const calFix = (k, p, grid, started) => started ? Math.max(0, Math.min(1, calRead(CAL.race[k], p)))
-    : (w => 1 / (1 + Math.exp(-(w[0] + w[1] * lo(p) + w[2] * Math.log(Math.max(1, grid))))))(CAL.pre[k]);
+  const calFix = (k, p, pos, started) => (w => 1 / (1 + Math.exp(-(w[0] + w[1] * lo(p) + w[2] * Math.log(Math.max(1, pos))))))(CAL[started ? 'race' : 'pre'][k]);
 
   const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor((s.length - 1) / 2)] : null; };
   const mean = a => a.reduce((x, y) => x + y, 0) / a.length;

@@ -3,9 +3,9 @@
 //   DUMP=data/race-raw.json node tools/race-backtest.mjs --year=2024,2025 --quiet --set=cal=0,temp=1
 //   node tools/race-calibrate.mjs data/race-raw.json   → prints the check, writes data/race-cal.json
 // Then paste data/race-cal.json into CAL in racesim.js.
-// Before the start: chance = logistic(a + b·log-odds(figure) + c·log(grid place)), because past
-// races show a driver further back wins less often than the same figure from the front row.
-// During the race: a curve of [figure, how often it came true], learned per market.
+// chance = logistic(a + b·log-odds(figure) + c·log(place)), fitted separately before the start
+// (place = grid slot) and during the race (place = running position), because a driver further
+// back wins less often than the same figure from the front.
 import fs from 'node:fs';
 const D = JSON.parse(fs.readFileSync(process.argv[2] || 'data/race-raw.json', 'utf8'));
 const CUT = { win: 1, top3: 3, top5: 5, top10: 10 };
@@ -27,8 +27,8 @@ function fitRace(groups, m) { // pool-adjacent-violators, lightly pulled towards
   return bl.map(b => [+b.x.toFixed(4), +((b.s + 3 * b.x) / (b.n + 3)).toFixed(4)]);
 }
 const readCurve = (k, p) => { if (p <= k[0][0]) return k[0][1] * p / Math.max(k[0][0], 1e-6); const l = k.at(-1); if (p >= l[0]) return l[1] + (p - l[0]) * (1 - l[1]) / Math.max(1e-6, 1 - l[0]); for (let i = 1; i < k.length; i++) if (p <= k[i][0]) { const [x0, y0] = k[i - 1], [x1, y1] = k[i]; return y0 + (y1 - y0) * (p - x0) / (x1 - x0); } };
-const predict = (g, m, C) => renorm(g.cars.map(c => g.cp === 0 ? sig(C.pre[m][0] + C.pre[m][1] * lg(c.p[m]) + C.pre[m][2] * Math.log(c.g)) : Math.max(0, Math.min(1, readCurve(C.race[m], c.p[m])))), Math.min(CUT[m], g.cars.length));
-const fitAll = gs => ({ pre: Object.fromEntries(Object.keys(CUT).map(m => [m, fitPre(gs.filter(g => g.cp === 0), m)])), race: Object.fromEntries(Object.keys(CUT).map(m => [m, fitRace(gs.filter(g => g.cp > 0), m)])) });
+const predict = (g, m, C) => renorm(g.cars.map(c => { const w = C[g.cp === 0 ? 'pre' : 'race'][m]; return sig(w[0] + w[1] * lg(c.p[m]) + w[2] * Math.log(c.g)); }), Math.min(CUT[m], g.cars.length));
+const fitAll = gs => ({ pre: Object.fromEntries(Object.keys(CUT).map(m => [m, fitPre(gs.filter(g => g.cp === 0), m)])), race: Object.fromEntries(Object.keys(CUT).map(m => [m, fitPre(gs.filter(g => g.cp > 0), m)])) });
 const ll = r => -r.reduce((s, [p, h]) => s + Math.log(Math.min(.999, Math.max(.001, h ? p : 1 - p))), 0) / r.length;
 const bands = r => [[0.1, 0.2], [0.2, 0.3], [0.3, 0.5], [0.5, 0.7], [0.7, 0.9]].map(([lo, hi]) => { const x = r.filter(v => v[0] >= lo && v[0] < hi); return x.length ? `${Math.round(x.reduce((s, v) => s + v[0], 0) / x.length * 100)}→${Math.round(x.filter(v => v[1]).length / x.length * 100)}` : '–'; }).join('  ');
 console.log('said→happened (%), bands 10-20 20-30 30-50 50-70 70-90; fitted on the other season');
