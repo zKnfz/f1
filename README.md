@@ -34,6 +34,10 @@ Then open http://127.0.0.1:8765. The relay records lap history even when
 the page is closed and saves it in `data/`. Start it before a session begins
 to get the full history.
 
+If the scheduled recorder is set up (`tools/record-and-share.sh` every 15 minutes), it starts
+the relay 25 minutes before each session on the F1 calendar and stops it once the session is
+over. A relay you start yourself is never stopped by it.
+
 Options: `FEEDS=3` (how many connections race each other for the fastest
 update) and `PORT=8765`. In the browser, `?mode=direct` or `?mode=relay`
 forces a mode, and `?feeds=3` sets the connection count in direct mode.

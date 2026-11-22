@@ -7,7 +7,8 @@
 #   tools/record-and-share.sh --test   only check that the recorder can reach the F1 feed
 #
 # Safe to run every 15 minutes from a scheduler: it exits straight away when no session is on,
-# and it will not record the same session twice.
+# and it will not record the same session twice. It also starts the local relay (server.mjs)
+# for each session and stops it afterwards.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,6 +25,24 @@ if [ "$(node -p 'Number(process.versions.node.split(".")[0]) >= 18')" != "true" 
 if [ "${1:-}" = "--test" ]; then node tools/record.mjs --test; exit $?; fi
 
 check=$(node tools/session-check.mjs)
+
+# The local relay (server.mjs, http://127.0.0.1:8765) follows the F1 schedule too: started from
+# 25 minutes before a session until it is over, then stopped. Only a relay this script started
+# (data/relay.pid) is ever stopped, so one you start yourself is left alone.
+mkdir -p data
+relay_pid() { [ -f data/relay.pid ] && kill -0 "$(cat data/relay.pid)" 2>/dev/null && cat data/relay.pid; }
+case "$check" in
+  *'"record":true'*)
+    if ! lsof -ti tcp:8765 >/dev/null 2>&1; then
+      nohup node server.mjs >> data/relay.log 2>&1 &
+      echo $! > data/relay.pid
+      echo "$(date) Relay started (pid $!)"
+    fi ;;
+  *'schedule unavailable'*) ;; # don't stop anything on a failed schedule lookup
+  *)
+    if pid=$(relay_pid); then kill "$pid" && echo "$(date) Relay stopped (no session on)"; rm -f data/relay.pid; fi ;;
+esac
+
 case "$check" in *'"record":true'*) ;; *) exit 0 ;; esac
 wait=$(echo "$check" | sed -E 's/.*"wait":([0-9]+).*/\1/')
 max=$(echo "$check" | sed -E 's/.*"max":([0-9]+).*/\1/')
