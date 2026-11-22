@@ -36,6 +36,10 @@ export function parseF1tv(raw) {
   try { const j = JSON.parse(decodeURIComponent(raw)); return j?.data?.subscriptionToken || null; } catch {}
   return /^[\w-]+\.[\w-]+\.[\w-]+$/.test(raw) ? raw : null;
 }
+// When the sign-in runs out (seconds since 1970), or null. Never exposes the token itself.
+export function jwtExp(tok) {
+  try { return JSON.parse(Buffer.from(String(tok).split('.')[1], 'base64url')).exp || null; } catch { return null; }
+}
 // "Position.z" / "CarData.z" arrive as base64 of raw-deflated JSON.
 function unz(b64) { try { return JSON.parse(zlib.inflateRawSync(Buffer.from(b64, 'base64'))); } catch { return null; } }
 let teleSeen = 0;
@@ -92,7 +96,12 @@ async function connect(c) {
     const cookie = (neg.headers.getSetCookie?.() || []).map(x => x.split(';')[0]).join('; ');
     const { connectionToken } = await neg.json();
     ws = c.ws = new WebSocket(`wss://${F1}/signalrcore?id=${encodeURIComponent(connectionToken)}`, { headers: { Cookie: cookie, ...auth } });
-    if (c.id === 1) console.log(tok ? 'F1 TV sign-in found: asking for car positions and telemetry' : 'No F1 TV sign-in: car positions will be estimated');
+    if (c.id === 1) {
+      const exp = tok && jwtExp(tok), left = exp ? (exp * 1000 - Date.now()) / 3600e3 : null;
+      console.log(!tok ? 'No F1 TV sign-in: car positions will be estimated'
+        : left != null && left <= 0 ? `F1 TV sign-in EXPIRED on ${new Date(exp * 1000).toString()}: renew data/f1tv-token.txt`
+        : `F1 TV sign-in found${left != null ? ` (runs out in ${left.toFixed(0)} h)` : ''}: asking for car positions and telemetry`);
+    }
   } catch (e) {
     console.error(`feed ${c.id} connect failed:`, e.message);
     return reconnect(c);
@@ -230,8 +239,12 @@ function recordLap(num) {
     at: Date.now(),
   };
   w.sawPit = !!(line.InPit || line.PitOut);
+  // A new lap time is always a new lap. F1's lap counter sometimes lags by one when the time
+  // arrives, so never let a lap replace the one before it: number it after that one instead.
   const list = history.laps[num] ??= [];
-  if (rec.lap && list.at(-1)?.lap === rec.lap) list[list.length - 1] = rec; else list.push(rec);
+  const prev = list.at(-1);
+  if (rec.lap && prev?.lap && rec.lap <= prev.lap) rec.lap = prev.lap + 1;
+  list.push(rec);
   broadcast('lap', [num, rec]);
   saveSoon();
 }
@@ -264,6 +277,11 @@ http.createServer(async (req, res) => {
     const ka = setInterval(() => res.write(': keepalive\n\n'), 15000);
     req.on('close', () => { clients.delete(res); clearInterval(ka); });
     return;
+  }
+  if (url.pathname === '/api/f1tv') { // only whether there is a sign-in and when it runs out
+    const tok = await f1tvToken();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ signedIn: !!tok, exp: tok ? jwtExp(tok) : null }));
   }
   if (url.pathname === '/api/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

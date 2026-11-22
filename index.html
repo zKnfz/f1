@@ -58,6 +58,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .apitem{font-size:12.5px;padding:6px 8px;border-left:3px solid var(--blue);margin-bottom:4px;background:#171b26;border-radius:4px} .apitem time{color:var(--dim);font:500 10.5px 'JetBrains Mono',monospace;margin-right:8px}
 .apitem.al-red{border-left-color:var(--red)} .apitem.al-amber{border-left-color:var(--amber)} .apitem.al-green{border-left-color:var(--green)}
 @media (max-width:640px){#alerts{bottom:10px;right:10px;width:calc(100vw - 20px)} .al{font-size:13px;padding:8px 10px} #alerts .al:nth-child(n+3){display:none}}
+.f1x{display:block;color:var(--amber);font-weight:600;margin-bottom:3px} .f1x.bad{color:var(--red)}
 .teletag{padding:6px 14px 10px;font-size:11px;color:var(--dim)} .teletag b{color:var(--green);font-weight:600}
 .teletag button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:5px;padding:2px 7px;font:inherit;cursor:pointer;margin-left:4px}
 .teletag button:hover{color:var(--text);border-color:var(--muted)}
@@ -394,7 +395,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=47"></script>
+<script src="direct.js?v=48"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -469,7 +470,9 @@ es.addEventListener('history', e=>{ hist = e.detail; engDirty = true; });
 es.addEventListener('lap', e=>{
   const [n, rec] = e.detail;
   const l = hist.laps[n] ??= [];
-  if(rec.lap && l.at(-1)?.lap===rec.lap) l[l.length-1] = rec; else l.push(rec);
+  if(l.at(-1)===rec) return; // direct mode already added it
+  if(rec.lap && l.at(-1)?.lap && rec.lap<=l.at(-1).lap) rec.lap = l.at(-1).lap+1;
+  l.push(rec);
   engDirty = true;
 });
 es.addEventListener('pit', e=>{ const [n, rec] = e.detail; (hist.pits[n] ??= []).push(rec); engDirty = true; });
@@ -930,14 +933,34 @@ function frame(){
 requestAnimationFrame(frame);
 setInterval(renderDelay, 500);
 setInterval(renderTeleTag, 1000);
+// When the F1 TV sign-in runs out. Direct mode reads it from this browser; with the relay
+// the relay says (it never sends the token itself). Checked every 5 minutes.
+let f1tvExp = null, f1tvExpAt = 0;
+function f1tvExpiry(){
+  if(Date.now() - f1tvExpAt < 300000) return f1tvExp;
+  f1tvExpAt = Date.now();
+  if(DIRECT){
+    try{ const t = localStorage.getItem('pitwall-f1tv'); f1tvExp = t ? JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).exp || null : null; }catch{ f1tvExp = null; }
+  } else fetch('/api/f1tv',{cache:'no-store'}).then(r=>r.json()).then(d=>{ f1tvExp = d.exp || null; }).catch(()=>{});
+  return f1tvExp;
+}
+function expiryNote(){
+  const exp = f1tvExpiry(); if(!exp) return '';
+  const h = (exp*1000 - Date.now())/3600e3;
+  const when = new Date(exp*1000).toLocaleString([], {weekday:'short', hour:'numeric', minute:'2-digit'});
+  if(h <= 0) return `<span class="f1x bad">⚠ F1 TV sign-in expired ${when}: ${DIRECT ? 'remove it and add a fresh one' : 'paste a fresh one into data/f1tv-token.txt'}</span>`;
+  if(h < 24) return `<span class="f1x">⚠ F1 TV sign-in runs out ${when} (in ${h < 1 ? Math.round(h*60)+' min' : Math.round(h)+' h'}): renew it before the session</span>`;
+  return '';
+}
 function renderTeleTag(){
   const el = $('teleTag'); if(!el) return;
   const live = Date.now() - tele.at < 5000;
   let have = ''; try{ have = localStorage.getItem('pitwall-f1tv') || ''; }catch{}
-  const h = live ? '<b>● Live GPS</b> car positions and speeds'
+  const h = expiryNote() + (live ? '<b>● Live GPS</b> car positions and speeds'
     : DIRECT ? (have ? 'Positions estimated · F1 TV sign-in saved, waiting for car data <button id="f1tvBtn">Remove</button>'
                      : 'Positions estimated from timing <button id="f1tvBtn">Use F1 TV for live GPS</button>')
-    : 'Positions estimated from timing (for live GPS add your F1 TV sign-in to the relay: data/f1tv-token.txt)';
+    : f1tvExp ? 'Positions estimated · F1 TV sign-in found on the relay, waiting for car data'
+    : 'Positions estimated from timing (for live GPS add your F1 TV sign-in to the relay: data/f1tv-token.txt)');
   if(el.dataset.h === h) return;
   el.dataset.h = h; el.innerHTML = h;
   const b = $('f1tvBtn'); if(b) b.onclick = f1tvSetup;
@@ -956,9 +979,9 @@ function f1tvSetup(){
   location.reload();
 }
 </script>
-<script src="racesim.js?v=47"></script>
-<script src="engineer.js?v=47"></script>
-<script src="alerts.js?v=47"></script>
-<script src="rain.js?v=47"></script>
+<script src="racesim.js?v=48"></script>
+<script src="engineer.js?v=48"></script>
+<script src="alerts.js?v=48"></script>
+<script src="rain.js?v=48"></script>
 </body>
 </html>

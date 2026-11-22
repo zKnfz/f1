@@ -163,8 +163,12 @@ function startDirect(emit) {
     };
     w.sawPit = !!(line.InPit || line.PitOut);
     // The page's own 'lap' listener adds it to `hist`; keep this copy for saving.
+    // A new lap time is always a new lap. F1's lap counter sometimes lags by one when the time
+    // arrives, so never let a lap replace the one before it: number it after that one instead.
     const list = history.laps[num] ??= [];
-    if (rec.lap && list.at(-1)?.lap === rec.lap) list[list.length - 1] = rec; else list.push(rec);
+    const prev = list.at(-1);
+    if (rec.lap && prev?.lap && rec.lap <= prev.lap) rec.lap = prev.lap + 1;
+    list.push(rec);
     emit('lap', [num, rec]);
     saveSoon();
   }
