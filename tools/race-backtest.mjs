@@ -58,9 +58,9 @@ for (const f of files) {
     const res = RaceSim.run(b, { runs: 2000 });
     const got = Object.fromEntries(res.cars.map(c => [c.n, c]));
     for (const id of Object.keys(finish)) {
-      const p = got[id] || { win: 0, top5: 0, top10: 0 }, o = finish[id].order;
+      const p = got[id] || { win: 0, top3: 0, top5: 0, top10: 0 }, o = finish[id].order;
       if (process.env.DBG && ((p.top10 > 0.9 && o > 10) || (p.top5 > 0.9 && o > 5) || (p.top10 < 0.1 && o <= 10))) { const c = b.cars.find(x => x.n === id); console.log(d.name.slice(0, 12), cp, id, "top5", p.top5.toFixed(2), "top10", p.top10.toFixed(2), "got P" + o, "status", d.results.find(r => r.Driver.driverId === id).status, "posNow", c?.pos, "gap", c?.gap?.toFixed(1), "owed", c?.owed, "pace", c?.pace?.toFixed(2)); }
-      rows.push({ cp, m: 'win', p: p.win, hit: o === 1 }, { cp, m: 'top5', p: p.top5, hit: o <= 5 }, { cp, m: 'top10', p: p.top10, hit: o <= 10 });
+      rows.push({ cp, m: 'win', p: p.win, hit: o === 1 }, { cp, m: 'top3', p: p.top3, hit: o <= 3 }, { cp, m: 'top5', p: p.top5, hit: o <= 5 }, { cp, m: 'top10', p: p.top10, hit: o <= 10 });
     }
     const fav = res.cars.slice().sort((a, c) => c.win - a.win)[0];
     (favs[cp] ??= []).push(finish[fav.n]?.order === 1);
@@ -70,12 +70,12 @@ for (const f of files) {
 const brier = a => a.reduce((s, r) => s + (r.p - r.hit) ** 2, 0) / a.length;
 const ll = a => -a.reduce((s, r) => s + Math.log(Math.min(1 - 1e-3, Math.max(1e-3, r.hit ? r.p : 1 - r.p))), 0) / a.length;
 console.log(`\n${files.length} races`);
-for (const m of ['win', 'top5', 'top10']) {
+for (const m of ['win', 'top3', 'top5', 'top10']) {
   const line = CPS.map(cp => { const a = rows.filter(r => r.m === m && r.cp === cp); return `${(cp * 100).toFixed(0).padStart(2)}%: ${brier(a).toFixed(3)}`; }).join('  ');
   console.log(`${m.padEnd(6)} brier by race distance  ${line}   log loss ${ll(rows.filter(r => r.m === m)).toFixed(3)}`);
 }
 console.log('favourite to win was right: ' + CPS.map(cp => `${(cp * 100).toFixed(0)}% ${favs[cp].filter(Boolean).length}/${favs[cp].length}`).join(' · '));
-for (const m of ['win', 'top5', 'top10']) {
+for (const m of ['win', 'top3', 'top5', 'top10']) {
   const bands = [[0, 0.1], [0.1, 0.3], [0.3, 0.5], [0.5, 0.7], [0.7, 0.9], [0.9, 1.01]];
   console.log(`${m.padEnd(6)} calibration  ` + bands.map(([lo, hi]) => { const a = rows.filter(r => r.m === m && r.p >= lo && r.p < hi); if (!a.length) return ''; return `${(lo * 100).toFixed(0)}-${Math.min(100, hi * 100).toFixed(0)}%: said ${(a.reduce((s, r) => s + r.p, 0) / a.length * 100).toFixed(0)} got ${(a.filter(r => r.hit).length / a.length * 100).toFixed(0)} (${a.length})`; }).filter(Boolean).join(' | '));
 }

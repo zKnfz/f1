@@ -1,4 +1,4 @@
-// Race call: the chance each driver wins, finishes top 5 and finishes top 10.
+// Race call: the chance each driver wins, finishes top 3, top 5 and top 10.
 //
 // The rest of the race is played out a few thousand times. Each run starts from the real
 // gaps and adds, for every driver:
@@ -98,10 +98,10 @@
     const runs = opts.runs || P.runs, { u, g } = rng(opts.seed || 1121);
     const L = b.lapsLeft, cars = b.cars.slice().sort((a, c) => a.pos - c.pos);
     const N = cars.length;
-    const out = cars.map(c => ({ n: c.n, pos: c.pos, owed: c.owed, pace: c.pace, win: 0, top5: 0, top10: 0, avg: 0 }));
+    const out = cars.map(c => ({ n: c.n, pos: c.pos, owed: c.owed, pace: c.pace, win: 0, top3: 0, top5: 0, top10: 0, avg: 0 }));
     if (!N) return { cars: out, deg: b.deg, sc: 0 };
     if (L <= 0) {
-      cars.forEach((c, i) => { out[i].win = i === 0 ? 1 : 0; out[i].top5 = i < 5 ? 1 : 0; out[i].top10 = i < 10 ? 1 : 0; out[i].avg = i + 1; });
+      cars.forEach((c, i) => { out[i].win = i === 0 ? 1 : 0; out[i].top3 = i < 3 ? 1 : 0; out[i].top5 = i < 5 ? 1 : 0; out[i].top10 = i < 10 ? 1 : 0; out[i].avg = i + 1; });
       return { cars: out, deg: b.deg, sc: 0, settled: true };
     }
     const pScRace = 1 - (1 - P.scPerLap) ** L;
@@ -152,15 +152,16 @@
       [...fin, ...dnf].forEach((i, p) => {
         const o = out[i];
         if (p === 0) o.win++;
+        if (p < 3) o.top3++;
         if (p < 5) o.top5++;
         if (p < 10) o.top10++;
         o.avg += p + 1;
       });
     }
-    for (const o of out) { o.win /= runs; o.top5 /= runs; o.top10 /= runs; o.avg /= runs; }
+    for (const o of out) { o.win /= runs; o.top3 /= runs; o.top5 /= runs; o.top10 /= runs; o.avg /= runs; }
     // Soften the chances on the log-odds scale, then rescale so they still add up to one
-    // winner, five top-5 places and ten top-10 places.
-    if (P.temp !== 1) for (const [k, total] of [['win', 1], ['top5', Math.min(5, N)], ['top10', Math.min(10, N)]]) {
+    // winner, three top-3 places, five top-5 places and ten top-10 places.
+    if (P.temp !== 1) for (const [k, total] of [['win', 1], ['top3', Math.min(3, N)], ['top5', Math.min(5, N)], ['top10', Math.min(10, N)]]) {
       const soft = out.map(o => { const p = Math.min(1 - 1e-4, Math.max(1e-4, o[k])); return 1 / (1 + Math.exp(-P.temp * Math.log(p / (1 - p)))); });
       let f = 1;
       for (let it = 0; it < 30; it++) { const sum = soft.reduce((a, p) => a + Math.min(1, p * f), 0); f *= total / sum; }

@@ -1376,7 +1376,7 @@ setInterval(() => {
     if (cp && +cur >= 1 && !log.laps.some(e => e.k === hist.key && e.cp === cp)) {
       const r = raceCall();
       if (r && !r.settled) {
-        log.laps.push({ k: hist.key, cp, at: Date.now(), p: Object.fromEntries(r.cars.map(c => [c.n, [+c.win.toFixed(3), +c.top5.toFixed(3), +c.top10.toFixed(3)]])), fin: null });
+        log.laps.push({ k: hist.key, cp, at: Date.now(), p: Object.fromEntries(r.cars.map(c => [c.n, [+c.win.toFixed(3), +c.top5.toFixed(3), +c.top10.toFixed(3), +c.top3.toFixed(3)]])), fin: null });
         changed = true;
       }
     }
@@ -1393,10 +1393,10 @@ function raceRecordHtml() {
     return `${label} <b>${right} of ${g.length}</b>`;
   }).filter(Boolean).join(' · ');
   const band = (i, cut) => {
-    const all = done.flatMap(e => Object.entries(e.p).map(([n, p]) => ({ p: p[i], hit: (e.fin[n] ?? 99) <= cut })));
+    const all = done.flatMap(e => Object.entries(e.p).filter(([, p]) => p[i] != null).map(([n, p]) => ({ p: p[i], hit: (e.fin[n] ?? 99) <= cut })));
     return [[0.7, 1.01, '70%+'], [0.3, 0.7, '30–70%']].map(([lo, hi, l]) => { const g = all.filter(x => x.p >= lo && x.p < hi); return g.length ? `${l} came true <b>${g.filter(x => x.hit).length} of ${g.length}</b>` : ''; }).filter(Boolean).join(', ');
   };
-  return `<p class="note polerec"><b>Track record</b> · favourite to win was right: ${fav}.<br>Top 5 said ${band(1, 5) || '–'}. Top 10 said ${band(2, 10) || '–'}.${done.length < 15 ? ' Too few races so far to judge it.' : ''}</p>`;
+  return `<p class="note polerec"><b>Track record</b> · favourite to win was right: ${fav}.<br>Top 3 said ${band(3, 3) || '–'}. Top 5 said ${band(1, 5) || '–'}. Top 10 said ${band(2, 10) || '–'}.${done.length < 15 ? ' Too few races so far to judge it.' : ''}</p>`;
 }
 
 function panelRaceCall() {
@@ -1416,7 +1416,7 @@ function panelRaceCall() {
     const d = r.byN[c.n] || {}, L = L_()[c.n] || {};
     const plan = r.settled ? '' : L.Retired || L.Stopped ? 'out' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
     return `<tr class="${c.n === selected ? 'selrow' : ''}"><td class="mono">P${c.pos}</td><td>${chipD(c.n)}</td>
-      <td class="mono t ${cls(c.win)}">${pct(c.win)}%</td><td class="mono t ${cls(c.top5)}">${pct(c.top5)}%</td><td class="mono t ${cls(c.top10)}">${pct(c.top10)}%</td><td class="rcplan">${plan}</td></tr>`;
+      <td class="mono t ${cls(c.win)}">${pct(c.win)}%</td><td class="mono t ${cls(c.top3)}">${pct(c.top3)}%</td><td class="mono t ${cls(c.top5)}">${pct(c.top5)}%</td><td class="mono t ${cls(c.top10)}">${pct(c.top10)}%</td><td class="rcplan">${plan}</td></tr>`;
   }).join('');
   const lapTxt = inp.total ? (inp.started ? `Lap ${inp.cur} of ${inp.total}` : `Before the start · ${inp.total} laps`) : '';
   const early = !inp.started || inp.cur < Math.max(6, inp.total * 0.15);
@@ -1427,8 +1427,8 @@ function panelRaceCall() {
   return `<div class="ecard pole ${k}"><h4>Race call</h4>
     <div class="polehead"><span class="polepct mono">${r.settled ? '🏁' : pct(top.win) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
     <p class="note">${basis} These are chances, not certainties.</p>
-    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 30 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Top 10 chances of 70–90% came true 87% of the time. Calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
-    <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="note">Tested on all 48 races of 2024 and 2025: the favourite to win won 30 of 48 from the grid, 37 of 48 at half distance and 43 of 48 at 90% distance. Top 3 chances of 70–90% came true 80% of the time, top 10 chances 87%. Calls from the grid are the least reliable.</p>${raceRecordHtml()}</div>
+    <table class="et wide rc"><thead><tr><th>Now</th><th>Driver</th><th class="t">Win</th><th class="t">Top 3</th><th class="t">Top 5</th><th class="t">Top 10</th><th>Tyres · plan</th></tr></thead><tbody>${rows}</tbody></table>
     <p class="note">Sorted by where each driver is expected to finish. Green is 70% or more, yellow 10–30%. Stops to make come from the rule that every dry race needs two tyre types, or tyres that are past their usual life.</p>`;
 }
 
