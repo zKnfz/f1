@@ -78,6 +78,14 @@ node tools/race-tune.mjs             # try settings and print the best (slow)
 Each call is also logged during a live race and checked against the result; the record shows
 on the card.
 
+
+Once qualifying is over, save the official qualifying times so the pre-race call uses them
+rather than what a browser caught live (the live capture can be wrong):
+
+```bash
+node tools/fetch-qpace.mjs <year> <round> <meetingKey>
+```
+
 ## Notes
 - Data comes from Formula 1's public live timing feed and the circuit outlines from
   the MultiViewer API. Either could change or be restricted at any time.
