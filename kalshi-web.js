@@ -4,7 +4,7 @@
 // The prices go out as the same 'kalshi' event the relay sends, so the Race call and Pole call
 // show "K 44¢" either way.
 (function () {
-  const WORKER = 'https://pitwall-kalshi.REPLACE.workers.dev'; // set after the Worker is deployed
+  const WORKER = 'https://pitwall-kalshi.zknfzpitwall.workers.dev';
   const url = (() => { try { return localStorage.getItem('pitwall-kalshi-url') || WORKER; } catch { return WORKER; } })();
   if (/REPLACE/.test(url)) return;
   const SERIES = {
