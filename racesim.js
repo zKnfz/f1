@@ -71,6 +71,10 @@
     const owns = cars.filter(c => c.k >= 3).map(c => c.own);
     const field = owns.length >= 3 ? median(owns) : (inp.ref || 90);
     const qs = cars.map(c => c.qbest).filter(Boolean), qMed = median(qs);
+    // The oldest set of each compound still running: proof that tyre lasts at least that long
+    // at this track today (a soft lasted 30+ laps at Las Vegas 2026, against a usual 22).
+    const lasted = {};
+    for (const c of cars) if (c.compound) lasted[c.compound] = Math.max(lasted[c.compound] || 0, c.age || 0);
     for (const c of cars) {
       const prior = field + (c.qbest && qMed ? P.qualiWeight * (c.qbest - qMed) : 0);
       c.pace = c.k ? (c.k * c.own + P.shrink * prior) / (c.k + P.shrink) : prior;
@@ -82,10 +86,13 @@
       const rule = !inp.sprint && !wet && dryUsed < 2 && L > 0 ? 1 : 0;
       // A stop for wear is a judgement call, so it is a chance rather than a certainty:
       // none while the tyres are well inside their usual life, certain well beyond it.
-      const life = LIFE[c.compound] || 34;
+      const life = Math.max(LIFE[c.compound] || 34, lasted[c.compound] || 0);
       const x = L <= 3 ? 0 : rule ? (L / 2) / LIFE.HARD : (c.age + L) / life;
       c.rule = rule;
-      c.pExtra = Math.max(0, Math.min(1, (x - 0.95) / 0.5));
+      // Near the end teams nurse worn tyres home rather than stop: fade the chance of a wear
+      // stop out over the last 11 laps (none in the last 3).
+      const late = rule ? 1 : Math.max(0, Math.min(1, (L - 3) / 8));
+      c.pExtra = Math.max(0, Math.min(1, (x - 0.95) / 0.5)) * late;
       // Time for the rest of the race, without noise, for each plan: laps at pace, wear, stops.
       const wearCost = (a, n) => deg * (n * a + n * (n - 1) / 2);
       c.plans = [rule, rule + 1].map(owed => {

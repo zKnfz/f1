@@ -68,8 +68,19 @@ GitHub's servers (HTTP 403).
 moment the feed has it: safety car, VSC, red flag and the restart; double yellows; penalties,
 investigations and deleted laps for cars near the front; a car out; pit stops by the top 12;
 a driver into or out of the top 3, 5 or 10; a Race call Win / Top 5 / Top 10 chance moving 10
-points or more in a lap; and, with live GPS, a car slow or stopped on track. Click the bell
+points or more in a lap; in Q3, a car on for pole from its first purple sector, the lap fading,
+and provisional pole changing hands; and, with live GPS, a car slow or stopped on track. Click the bell
 for the list of recent alerts.
+
+## Kalshi prices
+
+The local relay reads Kalshi's public prices for the session that is on (pole in qualifying;
+winner, podium, top 5 and top 10 in races) every 1.5 s. No account or key, and it never trades.
+On the page served by the relay (http://127.0.0.1:8765) each chance on the Race call and Pole
+call shows Kalshi's price under it ("K 44¢"), green when the site is 10+ points higher, red when
+10+ lower. Every price change and the site's own figures every 2 s are recorded to
+`data/kalshi-<session>.jsonl` (stays on this computer) for replaying a session afterwards.
+Kalshi blocks other websites from reading its API, so the GitHub-hosted site can't show them.
 
 ## Live GPS and telemetry (F1 TV sign-in)
 

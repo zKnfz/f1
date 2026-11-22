@@ -202,11 +202,55 @@
     for (const l of Object.keys(byLap)) if (+l < lap - 3) delete byLap[l];
   }, 5000);
 
+  // ---------- Qualifying: on for pole ----------
+  // Runs the Pole call (Q3 only) whenever a sector time comes in, on any tab. Alerts when a car
+  // on a lap jumps to a real pole chance (25%+, up 15+ points since the lap began), when that
+  // lap fades, and when provisional pole changes hands.
+  const poleLap = {};   // n -> { lap, base, alerted }
+  let poleHolder = null, poleQueued = false;
+  function checkPole() {
+    poleQueued = false;
+    if (!ready || kind() !== 'quali' || typeof poleCall !== 'function') return;
+    const p = poleCall();
+    if (!p || p.part !== 3) { poleHolder = null; return; }
+    // Provisional pole: the fastest time set in Q3 so far.
+    const timed = p.cars.filter(c => c.best).sort((a, b) => a.best - b.best);
+    const top = timed[0];
+    if (top && poleHolder && top.n !== poleHolder) {
+      const gap = timed[1] ? ` by ${(timed[1].best - top.best).toFixed(3)}` : '';
+      fire('ppole' + top.n + top.best, 'green', `🏁 <b>${tla(top.n)}</b> provisional pole ${fmtLapT(top.best)}${gap}`, 0);
+    }
+    if (top) poleHolder = top.n;
+    for (const c of p.cars) {
+      const lapNo = typeof secLap === 'object' ? secLap[c.n] : null;
+      const onLap = !!c.lap && /on a lap/.test(c.why);
+      // A new lap starts at sector 1: its starting point is the chance just before that sector.
+      if (!poleLap[c.n] || poleLap[c.n].lap !== lapNo) poleLap[c.n] = { lap: lapNo, base: poleLap[c.n]?.last ?? c.ch, alerted: 0 };
+      const st = poleLap[c.n];
+      if (onLap && !st.alerted && c.ch >= 0.25 && c.ch - st.base >= 0.15) {
+        const done = secLog?.[c.n]?.[lapNo] || [];
+        const purple = arr(L_()[c.n]?.Sectors).map((s, i) => done[i] && s?.OverallFastest ? 'S' + (i + 1) : null).filter(Boolean);
+        st.alerted = c.ch;
+        fire(`onpole${c.n}:${lapNo}`, 'red', `⚡ <b>${tla(c.n)}</b> on for pole${purple.length ? ` · purple ${purple.join(', ')}` : ''} · heading for ${fmtLapT(c.lap.m)} · chance ${Math.round(st.base * 100)}% → <b>${Math.round(c.ch * 100)}%</b>`, 0);
+      } else if (st.alerted && !st.faded && c.ch <= st.alerted / 2 && st.alerted - c.ch >= 0.15) {
+        fire(`fade${c.n}:${lapNo}`, 'amber', `📉 <b>${tla(c.n)}</b> lap fading · pole chance ${Math.round(st.alerted * 100)}% → <b>${Math.round(c.ch * 100)}%</b>`, 0);
+        st.faded = true; // one fade alert per lap
+      }
+      st.last = c.ch;
+    }
+  }
+
   // ---------- Wiring ----------
   es.addEventListener('feed', e => {
-    const topic = e.detail[0];
+    const [topic, data] = e.detail;
     if (topic === 'TrackStatus') onTrack();
     else if (topic === 'RaceControlMessages') onRC();
-    else if (topic === 'TimingData') onTiming();
+    else if (topic === 'TimingData') {
+      onTiming();
+      // A new sector or lap time in qualifying: re-check pole right away (batched per 100 ms).
+      if (kind() === 'quali' && !poleQueued && Object.values(data?.Lines || {}).some(u => u?.Sectors || u?.BestLapTime || u?.LastLapTime)) {
+        poleQueued = true; setTimeout(checkPole, 100);
+      }
+    }
   });
 })();

@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
+import { startKalshi } from './kalshi.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8765;
@@ -262,6 +263,8 @@ async function circuit(key, year) {
   return circuits.get(id);
 }
 
+const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA });
+
 // ---------- HTTP ----------
 const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js' };
 http.createServer(async (req, res) => {
@@ -274,8 +277,15 @@ http.createServer(async (req, res) => {
     send(res, 'status', { status: feedStatus });
     if (Object.keys(state).length) send(res, 'full', state);
     if (history.key) send(res, 'history', history);
+    send(res, 'kalshi', kalshi.prices());
     const ka = setInterval(() => res.write(': keepalive\n\n'), 15000);
     req.on('close', () => { clients.delete(res); clearInterval(ka); });
+    return;
+  }
+  if (url.pathname === '/api/sitelog' && req.method === 'POST') { // the site's own figures, for the Kalshi replay
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 100000) req.destroy(); });
+    req.on('end', () => { try { kalshi.logSite(JSON.parse(body)); } catch {} res.writeHead(204); res.end(); });
     return;
   }
   if (url.pathname === '/api/f1tv') { // only whether there is a sign-in and when it runs out

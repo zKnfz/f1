@@ -59,6 +59,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 .apitem.al-red{border-left-color:var(--red)} .apitem.al-amber{border-left-color:var(--amber)} .apitem.al-green{border-left-color:var(--green)}
 @media (max-width:640px){#alerts{bottom:10px;right:10px;width:calc(100vw - 20px)} .al{font-size:13px;padding:8px 10px} #alerts .al:nth-child(n+3){display:none}}
 .f1x{display:block;color:var(--amber);font-weight:600;margin-bottom:3px} .f1x.bad{color:var(--red)}
+.kp{display:block;font:500 10.5px 'JetBrains Mono',monospace;color:var(--dim);margin-top:1px} .kp.kup{color:var(--green)} .kp.kdn{color:var(--red)}
 .teletag{padding:6px 14px 10px;font-size:11px;color:var(--dim)} .teletag b{color:var(--green);font-weight:600}
 .teletag button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:5px;padding:2px 7px;font:inherit;cursor:pointer;margin-left:4px}
 .teletag button:hover{color:var(--text);border-color:var(--muted)}
@@ -395,7 +396,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=48"></script>
+<script src="direct.js?v=49"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -495,7 +496,7 @@ es.addEventListener('full', ()=>{ engDirty = true; });
     const src = new EventSource('events');
     src.onopen = ()=>{ relayUp = true; schedule(); };
     src.onerror = ()=>{ relayUp = false; schedule(); };
-    for(const t of ['status','full','feed','history','lap','pit']) src.addEventListener(t, e=>emit(t, JSON.parse(e.data)));
+    for(const t of ['status','full','feed','history','lap','pit','kalshi']) src.addEventListener(t, e=>emit(t, JSON.parse(e.data)));
   } else {
     DIRECT = true; relayUp = true;
     startDirect(emit);
@@ -979,9 +980,9 @@ function f1tvSetup(){
   location.reload();
 }
 </script>
-<script src="racesim.js?v=48"></script>
-<script src="engineer.js?v=48"></script>
-<script src="alerts.js?v=48"></script>
-<script src="rain.js?v=48"></script>
+<script src="racesim.js?v=49"></script>
+<script src="engineer.js?v=49"></script>
+<script src="alerts.js?v=49"></script>
+<script src="rain.js?v=49"></script>
 </body>
 </html>

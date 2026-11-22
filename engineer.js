@@ -110,10 +110,19 @@ es.addEventListener('feed', e => {
       const lap = secLap[n];
       if (!lap) continue;
       ((secLog[n] ??= {})[lap] ??= [null, null, null])[i] = v;
-      if (n === selected || n === engCompare) engDirty = true;
+      if (n === selected || n === engCompare) { engDirty = true; engSoon(); }
     }
   }
 });
+// Lap times and Driver tabs: redraw on the next frame when one of the drivers being looked at
+// gets a sector or lap, instead of waiting for the 250 ms timer.
+let engSoonQueued = false;
+function engSoon() {
+  if (engSoonQueued || !['laps', 'driver'].includes(engTab[sessionKind()])) return;
+  engSoonQueued = true;
+  requestAnimationFrame(() => { engSoonQueued = false; if (engDirty) { engDirty = false; try { engRender(); } catch (err) { console.error(err); } } });
+}
+es.addEventListener('lap', e => { const n = e.detail[0]; if (n === selected || n === engCompare) engSoon(); });
 es.addEventListener('full', () => { for (const k in secLap) delete secLap[k]; });
 
 // Speed at the first intermediate this lap, tracked the same way, to spot laps where a
@@ -1006,7 +1015,7 @@ function poleHtml() {
     : '<b>Early estimate</b> · nobody is on a lap. Based on each driver\'s best sectors and who is likely to run again, so treat it as a rough guide.';
   const rows = p.cars.slice(0, 5).map(c => {
     const k = c.ch >= 0.5 ? 'hi' : c.ch >= 0.15 ? 'mid' : 'lo';
-    return `<tr><td>${chipD(c.n)}</td><td class="pjch"><div class="chbar ${k}"><i style="width:${Math.max(Math.round(c.ch * 100), c.ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct(c.ch)}%</span></td><td class="dimt polewhy">${c.why}</td></tr>`;
+    return `<tr><td>${chipD(c.n)}</td><td class="pjch"><div class="chbar ${k}"><i style="width:${Math.max(Math.round(c.ch * 100), c.ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct(c.ch)}%</span>${p.part === 3 && !p.settled ? kTag('pole', c.n, c.ch) : ''}</td><td class="dimt polewhy">${c.why}</td></tr>`;
   }).join('');
   return `<div class="ecard pole ${cls}"><h4>${title}</h4>
     <div class="polehead"><span class="polepct mono">${p.settled ? '🏁' : pct(top.ch) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
@@ -1444,6 +1453,37 @@ function trendFor(r) {
   return base == null ? null : { lap: base, p: raceTrend.laps[base] };
 }
 
+// ---------- Kalshi prices (only with the local relay: Kalshi blocks other websites) ----------
+let kalshi = null;
+es.addEventListener('kalshi', e => { kalshi = e.detail; engDirty = true; });
+// "K 44¢" under the site's figure: the middle of Kalshi's bid and ask (the last trade if one side
+// is empty). Green when the site is 10+ points above Kalshi, red when 10+ below.
+function kTag(m, n, site) {
+  const p = kalshi?.prices?.[m]?.[dInfo(n).code];
+  if (!p || Date.now() - kalshi.at > 60000) return '';
+  const [bid, ask, last] = p;
+  const mid = bid != null && ask != null && ask > 0 ? (bid + ask) / 2 : last;
+  if (mid == null) return '';
+  const d = Math.round(site * 100 - mid), c = d >= 10 ? 'kup' : d <= -10 ? 'kdn' : '';
+  return `<span class="kp ${c}" title="Kalshi: bid ${bid ?? '–'}¢ · ask ${ask ?? '–'}¢ · last ${last ?? '–'}¢${c ? ` · site ${d > 0 ? '+' : ''}${d} vs Kalshi` : ''}">K ${Math.round(mid)}¢</span>`;
+}
+
+// With the relay, send the site's own figures to it every 2 s so they are recorded next to the
+// Kalshi prices. Uses the same cached race call as the table and the alerts (no extra work).
+setInterval(() => {
+  if (DIRECT || state.SessionStatus?.Status !== 'Started') return;
+  const kind = sessionKind(), r4 = x => Math.round(x * 1000) / 1000;
+  let rec = null;
+  if (kind === 'race') {
+    const r = raceCall(); if (!r || r.settled) return;
+    rec = { kind, lap: r.inp.cur, figs: Object.fromEntries(r.cars.map(c => [dInfo(c.n).code, [r4(c.win), r4(c.top3), r4(c.top5), r4(c.top10)]])) };
+  } else if (kind === 'quali') {
+    const p = poleCall(); if (!p) return;
+    rec = { kind, part: p.part, figs: Object.fromEntries(p.cars.map(c => [dInfo(c.n).code, r4(c.ch)])) };
+  }
+  if (rec) fetch('api/sitelog', { method: 'POST', body: JSON.stringify(rec), keepalive: true }).catch(() => {});
+}, 2000);
+
 function panelRaceCall() {
   const r = raceCall();
   if (!r) return '<p class="note">Waiting for timing data…</p>';
@@ -1467,7 +1507,7 @@ function panelRaceCall() {
     const plan = r.settled ? '' : out ? '<span class="dimt">out</span>' : `${tyreChip(d.compound, d.age)} ${d.owed ? `<span class="c-yellow">${d.owed} stop${d.owed > 1 ? 's' : ''} to make</span>` : '<span class="dimt">no stop needed</span>'}`;
     const was = tr?.p[c.n];
     const arrow = i => { if (!was) return ''; const d = Math.round(([c.win, c.top3, c.top5, c.top10][i] - was[i]) * 100); return Math.abs(d) < 2 ? '<span class="rctr"></span>' : `<span class="rctr ${d > 0 ? 'c-green' : 'c-red'}">${d > 0 ? '▲' : '▼'}${Math.abs(d)}</span>`; };
-    const cell = (x, i) => `<td class="mono t ${cls(x)}">${pct(x)}%${arrow(i)}</td>`;
+    const cell = (x, i) => `<td class="mono t ${cls(x)}">${pct(x)}%${arrow(i)}${r.settled ? '' : kTag(['win', 'top3', 'top5', 'top10'][i], c.n, x)}</td>`;
     return `<tr class="${c.n === selected ? 'selrow' : ''}${out ? ' rcout' : ''}"><td class="mono">${out ? 'OUT' : 'P' + c.pos}${mv}</td><td class="mono dimt">${d.grid || '–'}</td><td>${chipD(c.n)}</td>
       ${cell(c.win, 0)}${cell(c.top3, 1)}${cell(c.top5, 2)}${cell(c.top10, 3)}<td class="rcplan">${plan}</td></tr>`;
   }).join('');
