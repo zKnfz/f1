@@ -1,0 +1,15 @@
+[Unit]
+Description=Pitwall: compress finished recordings, back them up, keep disk space free
+
+[Service]
+Type=oneshot
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/usr/local/bin/node tools/compact-recordings.mjs
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=2h
+StandardOutput=append:/opt/pitwall/data/maintain.log
+StandardError=append:/opt/pitwall/data/maintain.log

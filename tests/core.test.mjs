@@ -131,3 +131,41 @@ test('restart: a second recorder appends to the same session folder', async () =
   assert.equal(got.length, 5);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')).relayRuns.length, 2);
 });
+
+// ---------- Same answer on every machine ----------
+import { compute as goldenRows, compare as goldenCompare, FILE as GOLDEN } from './golden.mjs';
+test('race call matches the reference answer (Mac, Linux ARM, browser)', () => {
+  const g = JSON.parse(fs.readFileSync(GOLDEN, 'utf8'));
+  assert.equal(g.version, RaceSim.VERSION, 'model version changed: run node tests/golden.mjs --write after checking the change');
+  const c = goldenCompare(goldenRows(), g.rows);
+  assert.ok(c.same, 'largest difference ' + c.max);
+});
+
+test('restart after a crash mid-line: the first line after the restart is kept', async () => {
+  const dir = await sampleRecording();
+  fs.appendFileSync(path.join(dir, 'feed.tsv'), '4000\t12.5\t1\t{"type":1,"tar'); // crash mid-write
+  const rec2 = createRecorder({ dataDir: path.dirname(path.dirname(dir)), log: () => {} });
+  rec2.open({ Key: 9, Name: 'Qualifying', Meeting: { Name: 'Test GP' }, StartDate: '2026-11-28T16:00:00' });
+  rec2.frame(1, frameOf('TimingData', { Lines: { '1': { Position: '7' } } }, '2026-11-28T16:00:05.000Z'), 6000);
+  rec2.close('test'); await new Promise(r => setTimeout(r, 100));
+  assert.equal((await stateAt(dir)).state.TimingData.Lines['1'].Position, '7');
+});
+
+test('compressed recordings read back identically, including after more is appended', async () => {
+  const { compactFolder } = await import('../tools/compact-recordings.mjs');
+  const dir = await sampleRecording();
+  const before = JSON.stringify(await stateAt(dir));
+  compactFolder(dir);
+  assert.ok(!fs.existsSync(path.join(dir, 'feed.tsv')) && fs.existsSync(path.join(dir, 'feed.tsv.gz')));
+  assert.equal(JSON.stringify(await stateAt(dir)), before);
+  // The relay reopens the session (restart) and writes more: plain file after the .gz
+  const rec2 = createRecorder({ dataDir: path.dirname(path.dirname(dir)), log: () => {} });
+  rec2.open({ Key: 9, Name: 'Qualifying', Meeting: { Name: 'Test GP' }, StartDate: '2026-11-28T16:00:00' });
+  rec2.frame(1, frameOf('TimingData', { Lines: { '1': { Position: '5' } } }, '2026-11-28T16:00:09.000Z'), 9000);
+  rec2.close('test'); await new Promise(r => setTimeout(r, 100));
+  assert.equal((await stateAt(dir)).state.TimingData.Lines['1'].Position, '5');
+  compactFolder(dir); // second compaction appends a second gzip part
+  assert.equal((await stateAt(dir)).state.TimingData.Lines['1'].Position, '5');
+  const got = []; for await (const f of readFeed(dir)) got.push(f.r);
+  assert.deepEqual(got, [1000, 2000, 2005, 3000, 9000]);
+});

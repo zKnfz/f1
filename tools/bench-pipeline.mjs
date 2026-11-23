@@ -7,7 +7,8 @@
 //   · main-thread stalls (long tasks > 50 ms) while alerts and timers run as in a live race
 import { chromium } from '../node_modules/playwright-core/index.mjs';
 const label = process.argv[2] || 'run';
-const b = await chromium.launch({ channel: 'chrome', headless: true });
+const channel = process.env.CHROME_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : '');
+const b = await chromium.launch({ ...(channel ? { channel } : {}), headless: true });
 const p = await b.newPage({ viewport: { width: 1280, height: 900 } });
 await p.goto('http://127.0.0.1:8765/', { waitUntil: 'load' });
 await p.waitForTimeout(5000);

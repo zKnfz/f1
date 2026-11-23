@@ -1,0 +1,52 @@
+# Proves the recorder works on Linux ARM64 (the Oracle Cloud server's platform) on every change
+# to it: tests, the end-to-end recording self-test, and a full rehearsal of the server install
+# with real systemd services. F1 refuses GitHub's network, so the live feed is not tested here
+# (tools/server-preflight.mjs does that on the server itself).
+name: Recorder on Linux ARM64
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['server.mjs', 'recorder.mjs', 'kalshi.mjs', 'racesim.js', 'tools/**', 'tests/**', 'deploy/**', '.github/workflows/recorder-linux-arm64.yml']
+permissions:
+  contents: read
+jobs:
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - name: Headless Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright-core@1.65.1
+          npx playwright-core install --with-deps chromium
+      - name: Tests
+        run: node --test tests/*.test.mjs
+      - name: Recording self-test (record, crash, restart, replay, compress, browser)
+        run: node tools/selftest-recording.mjs
+      - name: Rehearse the server install (systemd)
+        run: sudo bash deploy/oracle/install.sh
+      - name: Services running, crash recovery, health and maintenance
+        run: |
+          set -x
+          sleep 15
+          systemctl is-active pitwall-relay.service
+          systemctl list-timers 'pitwall*' --no-pager
+          curl -sf http://127.0.0.1:8765/api/health
+          pid=$(systemctl show -p MainPID --value pitwall-relay.service)
+          sudo kill -9 "$pid"; sleep 6
+          new=$(systemctl show -p MainPID --value pitwall-relay.service)
+          [ "$new" != "$pid" ] && [ "$new" != 0 ] && echo "relay restarted by systemd: $pid -> $new"
+          curl -sf http://127.0.0.1:8765/api/health
+          sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/health.mjs' || true
+          sudo -u pitwall sudo -n systemctl start pitwall-maintain.service && cat /opt/pitwall/data/maintain.json
+          sudo systemctl start pitwall-session.service; sleep 3; sudo tail -5 /opt/pitwall/data/session.log || true
+      - name: What this network gets from F1 (expected to be refused on GitHub)
+        continue-on-error: true
+        run: sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/server-preflight.mjs'
+      - name: Logs
+        if: always()
+        run: sudo tail -40 /opt/pitwall/data/relay.log /opt/pitwall/data/health.log 2>/dev/null || true

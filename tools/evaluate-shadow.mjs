@@ -7,16 +7,16 @@
 // tuned on, and only between race weekends.
 import fs from 'node:fs';
 import path from 'node:path';
-import { stateAt } from '../recorder.mjs';
+import { readJsonl, stateAt } from '../recorder.mjs';
 
 const root = path.resolve('data/rec');
-const dirs = fs.existsSync(root) ? fs.readdirSync(root).map(d => path.join(root, d)).filter(d => fs.existsSync(path.join(d, 'page.jsonl'))) : [];
+const dirs = fs.existsSync(root) ? fs.readdirSync(root).map(d => path.join(root, d)).filter(d => fs.readdirSync(d).some(f => f.startsWith('page.jsonl'))) : [];
 const K = ['win', 'top3', 'top5', 'top10'], CUT = { win: 1, top3: 3, top5: 5, top10: 10 };
 const score = {}; // model -> market -> {ll, br, n}
 const add = (model, mk, p, y) => { const s = (score[model] ??= {})[mk] ??= { ll: 0, br: 0, n: 0 }; const q = Math.min(1 - 1e-4, Math.max(1e-4, p)); s.ll += -(y * Math.log(q) + (1 - y) * Math.log(1 - q)); s.br += (p - y) ** 2; s.n++; };
 let sessions = 0;
 for (const dir of dirs) {
-  const page = fs.readFileSync(path.join(dir, 'page.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  const page = readJsonl(dir, 'page.jsonl');
   const race = page.filter(p => p.kind === 'race'), shadow = page.filter(p => p.kind === 'shadow' && p.cars);
   if (!race.length) continue;
   const { state } = await stateAt(dir);

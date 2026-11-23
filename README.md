@@ -164,3 +164,5 @@ While the relay runs, every F1 frame, connection event, prediction, alert and Ka
 - `node tools/replay-state.mjs data/rec/<dir> 900`: shows what the site knew 900 s in.
 - `node tools/schedule-wakes.mjs | sudo sh`: wakes the Mac before each session (needs power).
 - `node tools/evaluate-shadow.mjs`: scores the live race model against the shadow challengers.
+
+- Always-on recording on a Linux server (prepared, not deployed): see `deploy/oracle/README.md`.

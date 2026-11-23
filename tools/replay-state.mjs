@@ -10,7 +10,7 @@ if (!dirArg) { console.log('usage: node tools/replay-state.mjs data/rec/<dir> <I
 const dir = path.resolve(dirArg);
 let until = Infinity;
 if (when != null) {
-  if (/^\d+(\.\d+)?$/.test(when)) { for await (const f of readFeed(path.join(dir, 'feed.tsv'))) { until = f.r + Number(when) * 1000; break; } }
+  if (/^\d+(\.\d+)?$/.test(when)) { for await (const f of readFeed(dir)) { until = f.r + Number(when) * 1000; break; } }
   else until = Date.parse(when);
 }
 const { state, updates, lastAt } = await stateAt(dir, until);

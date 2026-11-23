@@ -1,0 +1,2 @@
+# /etc/sudoers.d/pitwall: the recorder may restart/start only its own services, nothing else.
+pitwall ALL=(root) NOPASSWD: /usr/bin/systemctl restart pitwall-relay.service, /usr/bin/systemctl start pitwall-session.service, /usr/bin/systemctl start pitwall-maintain.service

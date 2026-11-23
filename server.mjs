@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { startKalshi } from './kalshi.mjs';
-import { createRecorder, readFeed } from './recorder.mjs';
+import { createRecorder, readFeed, readJsonl } from './recorder.mjs';
 import os from 'node:os';
 
 // Replay: REPLAY=data/rec/<session folder> node server.mjs  plays a recording back to the page
@@ -19,6 +19,10 @@ const REPLAY = process.env.REPLAY || '';
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8765;
 const F1 = 'livetiming.formula1.com';
+// F1_ORIGIN points the relay at a stand-in feed (tools/selftest-recording.mjs only).
+const F1_HTTP = process.env.F1_ORIGIN || `https://${F1}`, F1_WS = F1_HTTP.replace(/^http/, 'ws');
+// Where recordings, lap history and the F1 TV sign-in live (data/ next to this file by default).
+const DATA_ROOT = path.resolve(process.env.PITWALL_DATA || path.join(DIR, 'data'));
 const RS = '\x1e'; // SignalR record separator
 const TOPICS = [
   'Heartbeat', 'SessionInfo', 'SessionData', 'SessionStatus', 'TrackStatus', 'LapCount',
@@ -35,7 +39,7 @@ const TOPICS = [
 // still works; positions are then estimated from the timing.
 async function f1tvToken() {
   let raw = process.env.F1TV_TOKEN || '';
-  if (!raw) try { raw = (await fs.readFile(path.join(DIR, 'data', 'f1tv-token.txt'), 'utf8')).trim(); } catch {}
+  if (!raw) try { raw = (await fs.readFile(path.join(DATA_ROOT, 'f1tv-token.txt'), 'utf8')).trim(); } catch {}
   return parseF1tv(raw);
 }
 export function parseF1tv(raw) {
@@ -99,11 +103,11 @@ async function connect(c) {
   let ws;
   try {
     const tok = await f1tvToken(), auth = tok ? { Authorization: `Bearer ${tok}` } : {};
-    const neg = await fetch(`https://${F1}/signalrcore/negotiate?negotiateVersion=1`, { method: 'POST', headers: auth });
+    const neg = await fetch(`${F1_HTTP}/signalrcore/negotiate?negotiateVersion=1`, { method: 'POST', headers: auth });
     if (!neg.ok) throw new Error(`negotiate ${neg.status}`);
     const cookie = (neg.headers.getSetCookie?.() || []).map(x => x.split(';')[0]).join('; ');
     const { connectionToken } = await neg.json();
-    ws = c.ws = new WebSocket(`wss://${F1}/signalrcore?id=${encodeURIComponent(connectionToken)}`, { headers: { Cookie: cookie, ...auth } });
+    ws = c.ws = new WebSocket(`${F1_WS}/signalrcore?id=${encodeURIComponent(connectionToken)}`, { headers: { Cookie: cookie, ...auth } });
     if (c.id === 1) {
       const exp = tok && jwtExp(tok), left = exp ? (exp * 1000 - Date.now()) / 3600e3 : null;
       console.log(!tok ? 'No F1 TV sign-in: car positions will be estimated'
@@ -186,6 +190,23 @@ setInterval(() => {
   if (!gapOpen && running && quiet > 15000) { gapOpen = lastFrameAt; rec.event('gap', { since: new Date(lastFrameAt).toISOString() }); console.log(new Date().toISOString(), 'feed: nothing received for 15 s'); }
   else if (gapOpen && quiet < 5000) { rec.event('gapEnd', { seconds: +((Date.now() - gapOpen) / 1000).toFixed(1) }); gapOpen = null; }
 }, 2000).unref?.();
+// Running all the time (a server): between sessions F1 sends nothing new, and an open
+// connection may keep showing the old session. So once a session has been over for 15 minutes,
+// or nothing has arrived for 10, reconnect every 10 minutes to pick up the next one, and pause
+// recording (nothing useful to keep) until a session that isn't over appears.
+let overSince = null, lastRefresh = Date.now();
+const OVER = /Finalised|Ends/;
+setInterval(() => {
+  const now = Date.now();
+  if (OVER.test(state.SessionStatus?.Status || '')) overSince ??= now; else overSince = null;
+  rec.setIdle(!!overSince && now - overSince > 30 * 60000);
+  const stale = (overSince && now - overSince > 15 * 60000) || now - lastFrameAt > 10 * 60000;
+  if (!REPLAY && conns.length && stale && now - lastRefresh > 10 * 60000) {
+    lastRefresh = now;
+    console.log(new Date().toISOString(), 'feed: no session running, reconnecting to look for the next one');
+    for (const c of conns) { c.live = false; c.retry = 0; try { c.ws?.close(); } catch {} }
+  }
+}, 30000).unref?.();
 function reconnect(c) {
   const wait = Math.min(30000, 2000 * 2 ** c.retry++) + Math.random() * 1000;
   setTimeout(() => connect(c), wait);
@@ -198,8 +219,8 @@ function startFeeds() {
 // ---------- Lap history ----------
 // F1's archive needs a login, so the relay keeps its own record of every completed
 // lap from the moment it starts. It is saved to data/ so a restart keeps it.
-const DATA = REPLAY ? path.join(os.tmpdir(), 'pitwall-replay') : path.join(DIR, 'data');
-const rec = createRecorder({ dataDir: path.join(DIR, 'data'), enabled: !REPLAY });
+const DATA = REPLAY ? path.join(os.tmpdir(), 'pitwall-replay') : DATA_ROOT;
+const rec = createRecorder({ dataDir: DATA_ROOT, enabled: !REPLAY });
 let history = { key: null, laps: {}, pits: {} };
 const watch = {}; // per driver: last recorded lap time, pit seen this lap, pending timer
 let saveTimer = null;
@@ -301,7 +322,7 @@ async function circuit(key, year) {
   return circuits.get(id);
 }
 
-const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), enabled: !REPLAY });
+const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), enabled: !REPLAY && process.env.KALSHI !== '0' });
 
 // ---------- HTTP ----------
 const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js', '/pagelog.js': 'pagelog.js', '/models/registry.json': 'models/registry.json' };
@@ -325,6 +346,17 @@ http.createServer(async (req, res) => {
     req.on('data', ch => { body += ch; if (body.length > 2e6) req.destroy(); });
     req.on('end', () => { try { for (const r of JSON.parse(body)) rec.page(r); } catch {} res.writeHead(204); res.end(); });
     return;
+  }
+  if (url.pathname === '/api/health') { // for tools/health.mjs (server monitoring)
+    let disk = null;
+    try { const s = await fs.statfs(DATA_ROOT); disk = { freeGB: +(s.bavail * s.bsize / 1e9).toFixed(2), freePct: +(100 * s.bavail / s.blocks).toFixed(1) }; } catch {}
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({
+      ok: true, replay: !!REPLAY, feed: feedStatus, live: liveCount(), feeds: FEEDS,
+      session: state.SessionInfo ? `${state.SessionInfo.Meeting?.Name} ${state.SessionInfo.Name}` : null, status: state.SessionStatus?.Status ?? null,
+      lastDataAgoS: +((Date.now() - lastFrameAt) / 1000).toFixed(1), recording: rec.stats(), idle: rec.idle(),
+      uptimeS: Math.round(process.uptime()), rssMB: Math.round(process.memoryUsage().rss / 1e6), disk,
+    }));
   }
   if (url.pathname === '/api/recording') { // what is being recorded (for the recorder's status checks)
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -385,15 +417,13 @@ async function startReplay() {
   console.log(`replaying ${dir} at ${speed}x${from ? `, from ${from / 1000} s in` : ''}`);
   setStatus('connecting');
   // Connection events (a connection dropping) are part of what the relay knew, so replay them too.
-  let events = [];
-  try { events = (await fs.readFile(path.join(dir, 'events.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(e => e.ev === 'closed'); } catch {}
-  let kal = [];
-  try { kal = (await fs.readFile(path.join(dir, 'kalshi.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(e => e.type === 'kalshi'); } catch {}
+  const events = readJsonl(dir, 'events.jsonl').filter(e => e.ev === 'closed');
+  const kal = readJsonl(dir, 'kalshi.jsonl').filter(e => e.type === 'kalshi');
   const prices = {};
   const pseudo = {};
   const connOf = id => pseudo[id] ??= (conns.push({ id, retry: 0, live: false }), conns.at(-1));
   let t0 = null, wall0 = null, n = 0, ei = 0, ki = 0;
-  for await (const { r, c, part } of readFeed(path.join(dir, 'feed.tsv'))) {
+  for await (const { r, c, part } of readFeed(dir)) {
     t0 ??= r;
     const at = r - t0;
     if (at >= from) {

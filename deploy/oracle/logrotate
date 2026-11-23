@@ -1,0 +1,10 @@
+# /etc/logrotate.d/pitwall
+/opt/pitwall/data/*.log {
+  weekly
+  rotate 8
+  compress
+  missingok
+  notifempty
+  copytruncate
+  su pitwall pitwall
+}

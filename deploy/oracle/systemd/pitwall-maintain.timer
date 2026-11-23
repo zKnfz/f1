@@ -1,0 +1,11 @@
+[Unit]
+Description=Pitwall maintenance every hour
+
+[Timer]
+OnBootSec=15min
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

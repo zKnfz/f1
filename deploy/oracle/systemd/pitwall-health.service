@@ -1,0 +1,13 @@
+[Unit]
+Description=Pitwall health check (restarts the relay or page when needed)
+
+[Service]
+Type=oneshot
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/usr/local/bin/node tools/health.mjs
+TimeoutStartSec=90
+StandardOutput=null
+StandardError=append:/opt/pitwall/data/health.log

@@ -6,13 +6,13 @@
 // against F1's own lap count, the site's records (page.jsonl) and Kalshi coverage.
 import fs from 'node:fs';
 import path from 'node:path';
-import { readFeed, stateAt } from '../recorder.mjs';
+import { readFeed, readJsonl, stateAt } from '../recorder.mjs';
 
 const root = path.resolve('data/rec');
 let dir = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!dir) {
-  const all = fs.existsSync(root) ? fs.readdirSync(root).map(d => path.join(root, d)).filter(d => fs.existsSync(path.join(d, 'feed.tsv'))) : [];
-  dir = all.sort((a, b) => fs.statSync(path.join(b, 'feed.tsv')).mtimeMs - fs.statSync(path.join(a, 'feed.tsv')).mtimeMs)[0];
+  const all = fs.existsSync(root) ? fs.readdirSync(root).map(d => path.join(root, d)).filter(d => fs.existsSync(path.join(d, 'meta.json'))) : [];
+  dir = all.sort((a, b) => fs.statSync(path.join(b, 'meta.json')).mtimeMs - fs.statSync(path.join(a, 'meta.json')).mtimeMs)[0];
 }
 if (!dir) { console.log('No recordings in data/rec yet.'); process.exit(1); }
 const q = (a, f) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(f * s.length))] : null; };
@@ -21,7 +21,7 @@ const fmtS = ms => ms == null ? '–' : ms >= 60000 ? `${(ms / 60000).toFixed(1)
 const per = {}, topics = {}, delays = [], seen = new Set();
 let first = null, last = null, frames = 0, unique = 0, dup = 0, bad = 0, snaps = 0, status = null;
 const silences = []; let lastData = null; const lapEnds = {}; let base = null; // laps already done when recording began
-for await (const f of readFeed(path.join(dir, 'feed.tsv'))) {
+for await (const f of readFeed(dir)) {
   frames++; first ??= f.r; last = f.r;
   const p = per[f.c] ??= { frames: 0, data: 0, first: 0 };
   p.frames++;
@@ -40,15 +40,15 @@ for await (const f of readFeed(path.join(dir, 'feed.tsv'))) {
   lastData = f.r;
   if (topic === 'TimingData') for (const [n, u] of Object.entries(data?.Lines || {})) if (u?.LastLapTime?.Value) lapEnds[n] = (lapEnds[n] || 0) + 1;
 }
-const ev = fs.existsSync(path.join(dir, 'events.jsonl')) ? fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+const ev = readJsonl(dir, 'events.jsonl');
 const count = k => ev.filter(e => e.ev === k).length;
 const drift = ev.filter(e => e.ev === 'driftCheck');
-const page = fs.existsSync(path.join(dir, 'page.jsonl')) ? fs.readFileSync(path.join(dir, 'page.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
-const kal = fs.existsSync(path.join(dir, 'kalshi.jsonl')) ? fs.readFileSync(path.join(dir, 'kalshi.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(k => k.type === 'kalshi') : [];
+const page = readJsonl(dir, 'page.jsonl');
+const kal = readJsonl(dir, 'kalshi.jsonl').filter(k => k.type === 'kalshi');
 const { state } = await stateAt(dir);
 
 console.log(`Recording ${path.relative(process.cwd(), dir)}`);
-console.log(`  ${new Date(first).toISOString()} → ${new Date(last).toISOString()} (${fmtS(last - first)}), ${frames} frames, ${(fs.statSync(path.join(dir, 'feed.tsv')).size / 1e6).toFixed(1)} MB`);
+console.log(`  ${new Date(first).toISOString()} → ${new Date(last).toISOString()} (${fmtS(last - first)}), ${frames} frames, ${(fs.readdirSync(dir).filter(f => f.startsWith('feed.tsv')).reduce((a, f) => a + fs.statSync(path.join(dir, f)).size, 0) / 1e6).toFixed(1)} MB on disk`);
 console.log(`  connections: ${Object.entries(per).map(([c, p]) => `#${c} ${p.frames} frames, first with ${p.first} of ${unique} updates`).join(' · ')}`);
 console.log(`  updates: ${unique} unique, ${dup} duplicate copies, ${snaps} snapshots, ${bad} unreadable lines`);
 console.log(`  topics: ${Object.entries(topics).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} ${n}`).join(', ') || 'none'}`);

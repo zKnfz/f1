@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import zlib from 'node:zlib';
 
 const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
@@ -27,8 +28,15 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
   let cur = null; // { key, dir, feed, events, page, kalshiFile, lines, bytes }
   const pending = []; // frames that arrive before the session is known
   const startedAt = Date.now();
+  let idle = false; // between sessions on an always-on server: keep nothing
 
   function stream(file) {
+    // After a crash the file may end in the middle of a line: end it, so the first line written
+    // after the restart is not glued onto the broken one.
+    try {
+      const size = fs.statSync(file).size;
+      if (size) { const fd = fs.openSync(file, 'r+'), b = Buffer.alloc(1); fs.readSync(fd, b, 0, 1, size - 1); if (b[0] !== 10) fs.writeSync(fd, '\n', size); fs.closeSync(fd); }
+    } catch {}
     const s = fs.createWriteStream(file, { flags: 'a' });
     s.on('error', e => log('recorder: write failed', file, e.message));
     return s;
@@ -37,6 +45,7 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
     if (!enabled || !info?.Key) return;
     if (cur?.key === info.Key) return;
     close('session changed');
+    idle = false; // a new session: record it
     const year = String(info.StartDate || '').slice(0, 4) || new Date().getUTCFullYear();
     const dir = path.join(root, `${year}-${slug(info.Meeting?.Name)}-${slug(info.Name)}-${info.Key}`);
     fs.mkdirSync(dir, { recursive: true });
@@ -60,13 +69,13 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
   }
   // A raw frame as received. Cheap: string concatenation only; no parsing or re-encoding.
   function frame(conn, part, receivedAt = Date.now()) {
-    if (!enabled) return;
+    if (!enabled || idle) return;
     const line = `${receivedAt}\t${performance.now().toFixed(1)}\t${conn}\t${part}\n`;
     if (!cur) { pending.push(line); if (pending.length > 5000) pending.shift(); return; }
     cur.feed.write(line); cur.lines++; cur.bytes += line.length;
   }
   function event(ev, extra = {}) {
-    if (!enabled || !cur) return;
+    if (!enabled || !cur || idle) return;
     cur.events.write(JSON.stringify({ r: Date.now(), m: +performance.now().toFixed(1), ev, ...extra }) + '\n');
   }
   function page(rec) {
@@ -82,17 +91,42 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
 
   return {
     enabled, open, close, frame, event, page,
+    setIdle(v) { if (v !== idle) { if (v) event('idle', { why: 'session over for 30 min' }); idle = v; if (!v) event('resumed'); } },
+    idle: () => idle,
     dir: () => cur?.dir || null,
     stats: () => cur ? { dir: cur.dir, lines: cur.lines, bytes: cur.bytes } : null,
   };
 }
 
 // ---------- Reading a recording back ----------
+// A recording's files may be compressed (tools/compact-recordings.mjs moves feed.tsv into
+// feed.tsv.gz, appending if it already exists). Readers take <name>.gz first, then <name>:
+// compaction only ever moves older lines into the .gz, so this is arrival order.
+function sources(file) {
+  if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'feed.tsv');
+  const base = file.replace(/\.gz$/, '');
+  return [base + '.gz', base].filter(f => fs.existsSync(f));
+}
+export function readText(dir, name) {
+  return sources(path.join(dir, name)).map(f => f.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(f)).toString('utf8') : fs.readFileSync(f, 'utf8')).join('');
+}
+export function readJsonl(dir, name) {
+  const out = [];
+  for (const l of readText(dir, name).split('\n')) { if (!l) continue; try { out.push(JSON.parse(l)); } catch {} } // a cut-off last line is skipped
+  return out;
+}
 // Yields { r, m, c, part } for every feed line, in file order (which is arrival order).
+// Takes the feed file or the recording folder.
 export async function* readFeed(file) {
+  for (const f of sources(file)) yield* readOne(f);
+}
+async function* readOne(file) {
   const fh = await fsp.open(file);
   let rest = '';
-  for await (const chunk of fh.createReadStream({ encoding: 'utf8', highWaterMark: 1 << 20 })) {
+  const raw = fh.createReadStream({ highWaterMark: 1 << 20 });
+  const src = file.endsWith('.gz') ? raw.pipe(zlib.createGunzip()) : raw;
+  src.setEncoding('utf8');
+  for await (const chunk of src) {
     const lines = (rest + chunk).split('\n');
     rest = lines.pop();
     for (const l of lines) {
@@ -117,10 +151,9 @@ export function merge(target, src) {
 export async function stateAt(dir, untilEpochMs = Infinity) {
   let state = {}, n = 0, last = null;
   const live = new Set(), seen = new Set();
-  let closes = [];
-  try { closes = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(e => e.ev === 'closed'); } catch {}
+  const closes = readJsonl(dir, 'events.jsonl').filter(e => e.ev === 'closed');
   let ci = 0;
-  for await (const f of readFeed(path.join(dir, 'feed.tsv'))) {
+  for await (const f of readFeed(dir)) {
     if (f.r > untilEpochMs) break;
     while (ci < closes.length && closes[ci].r <= f.r) live.delete(String(closes[ci++].conn));
     let m; try { m = JSON.parse(f.part); } catch { continue; }

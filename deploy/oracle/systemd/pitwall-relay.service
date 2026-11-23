@@ -1,0 +1,29 @@
+# The relay: connects to F1 all the time, records every session to /opt/pitwall/data/rec.
+[Unit]
+Description=Pitwall relay and recorder (F1 live timing)
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/usr/local/bin/node server.mjs
+# Restart straight away on any exit; the recording continues in the same session folder.
+Restart=always
+RestartSec=2
+# A clean stop (SIGTERM) lets it note the stop and flush the files.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+MemoryMax=1500M
+Nice=-5
+StandardOutput=append:/opt/pitwall/data/relay.log
+StandardError=append:/opt/pitwall/data/relay.log
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

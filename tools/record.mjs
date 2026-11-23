@@ -45,8 +45,20 @@ const server = http.createServer(async (req, res) => {
 await new Promise(r => server.listen(PORT, '127.0.0.1', r));
 
 // ---------- The page ----------
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+// Google Chrome on a Mac; on Linux (the ARM server) Playwright's own Chromium, as Chrome has
+// no Linux ARM build. CHROME_CHANNEL overrides ('' for Playwright's Chromium).
+const channel = process.env.CHROME_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : '');
+const browser = await chromium.launch({ ...(channel ? { channel } : {}), headless: true });
 const page = await browser.newPage();
+// The F1 TV sign-in from data/f1tv-token.txt (if there is one), put where the page looks for
+// it, so the recorder's page gets car positions and telemetry like a signed-in browser.
+{
+  const DATA = path.resolve(process.env.PITWALL_DATA || path.join(ROOT, 'data'));
+  let tok = process.env.F1TV_TOKEN || '';
+  if (!tok) try { tok = (await fs.readFile(path.join(DATA, 'f1tv-token.txt'), 'utf8')).trim(); } catch {}
+  try { const j = JSON.parse(decodeURIComponent(tok)); tok = j?.data?.subscriptionToken || tok; } catch {}
+  if (/^[\w-]+\.[\w-]+\.[\w-]+$/.test(tok)) await page.addInitScript(t => { try { localStorage.setItem('pitwall-f1tv', t); } catch {} }, tok);
+}
 page.on('pageerror', e => log('page error:', e.message));
 const open = async () => {
   await page.goto(`http://127.0.0.1:${PORT}/?mode=direct`, { waitUntil: 'domcontentloaded' });
@@ -89,8 +101,9 @@ async function save(info, note) {
     await fs.writeFile(path.join(OUT, 'index.json'), JSON.stringify(index, null, 1));
   }
   // A note about this run, kept out of git (data/ is ignored).
-  await fs.mkdir(path.join(ROOT, 'data'), { recursive: true });
-  await fs.writeFile(path.join(ROOT, 'data', 'last-run.json'), JSON.stringify({ at: new Date().toISOString(), test: TEST, note, ...info }, null, 1));
+  const DATA_DIR = path.resolve(process.env.PITWALL_DATA || path.join(ROOT, 'data'));
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.writeFile(path.join(DATA_DIR, 'last-run.json'), JSON.stringify({ at: new Date().toISOString(), test: TEST, note, ...info }, null, 1));
 }
 
 let exitCode = 0;

@@ -1,0 +1,23 @@
+# The recorder's page (the site's own predictions, recorded) for the session that is on.
+[Unit]
+Description=Pitwall session recorder page
+Wants=pitwall-relay.service
+After=pitwall-relay.service network-online.target
+
+[Service]
+Type=simple
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/opt/pitwall/tools/server-session.sh
+# Must outlast the longest race (record.mjs stops itself at the scheduled maximum).
+TimeoutStartSec=infinity
+RuntimeMaxSec=6h
+Restart=on-failure
+RestartSec=30
+Nice=5
+StandardOutput=append:/opt/pitwall/data/session.log
+StandardError=append:/opt/pitwall/data/session.log
+ProtectHome=true
+PrivateTmp=true
