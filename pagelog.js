@@ -50,4 +50,6 @@
     push({ kind: 'pole', part: p.part, settled: p.settled, cars });
   });
   es.addEventListener('alert', e => push({ kind: 'alert', ...e.detail }));
+  // The lap story (lapstory.js): each explained move, lap finished / aborted / deleted.
+  es.addEventListener('lapstory', e => { const d = e.detail; push({ kind: 'story', version: window.lapStory?.VERSION, n: dInfo(d.n).code, what: d.kind, text: String(d.text).replace(/<[^>]+>/g, ''), from: d.from, to: d.to }); });
 })();

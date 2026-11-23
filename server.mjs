@@ -325,7 +325,7 @@ async function circuit(key, year) {
 const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), enabled: !REPLAY && process.env.KALSHI !== '0' });
 
 // ---------- HTTP ----------
-const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js', '/pagelog.js': 'pagelog.js', '/models/registry.json': 'models/registry.json' };
+const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js', '/pagelog.js': 'pagelog.js', '/lapstory.js': 'lapstory.js', '/models/registry.json': 'models/registry.json' };
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/events') {

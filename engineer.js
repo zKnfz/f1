@@ -1015,7 +1015,7 @@ function poleHtml() {
     : '<b>Early estimate</b> · nobody is on a lap. Based on each driver\'s best sectors and who is likely to run again, so treat it as a rough guide.';
   const rows = p.cars.slice(0, 5).map(c => {
     const k = c.ch >= 0.5 ? 'hi' : c.ch >= 0.15 ? 'mid' : 'lo';
-    return `<tr><td>${chipD(c.n)}</td><td class="pjch"><div class="chbar ${k}"><i style="width:${Math.max(Math.round(c.ch * 100), c.ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct(c.ch)}%</span>${p.part === 3 && !p.settled ? kTag('pole', c.n, c.ch) : ''}</td><td class="dimt polewhy">${c.why}</td></tr>`;
+    return `<tr><td>${chipD(c.n)}</td><td class="pjch"><div class="chbar ${k}"><i style="width:${Math.max(Math.round(c.ch * 100), c.ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct(c.ch)}%</span>${p.part === 3 && !p.settled ? kTag('pole', c.n, c.ch) : ''}</td><td class="dimt polewhy">${window.lapStory?.trend(c.n) || ''}${c.why}</td></tr>`;
   }).join('');
   return `<div class="ecard pole ${cls}"><h4>${title}</h4>
     <div class="polehead"><span class="polepct mono">${p.settled ? '🏁' : pct(top.ch) + '%'}</span><div><b class="polename">${chipD(top.n)}</b><span class="polev">${verdict}</span></div></div>
@@ -1113,7 +1113,11 @@ function projMount(el) {
         + (race ? '' : `<td class="mono t">${posTxt}</td>`)
         + `<td class="pjch"><div class="chbar ${chCls}"><i style="width:${Math.max(pct, ch > 0 ? 2 : 0)}%"></i></div><span class="mono">${pct < 1 && ch > 0 ? '<1' : pct}%</span></td>`;
     }
-    const onIt = n === lead ? ` <span class="pjpole">⚡ ON FOR ${prize}</span>` : '';
+    // How the last lap ended (finished / aborted / deleted), for a little while after, in place
+    // of "slow lap" or "out lap" (lapstory.js).
+    const endedTxt = !lv?.projected && window.lapStory?.ended(n);
+    if (endedTxt) tail = `<td class="t lsendcell" colspan="${span}">${endedTxt}</td>`;
+    const onIt = (n === lead ? ` <span class="pjpole">⚡ ON FOR ${prize}</span>` : '') + (window.lapStory?.trend(n) || '');
     return { k: n, cls: (n === selected ? 'selrow' : '') + (n === lead ? ' pjtop' : ''), html: `<td>${chipD(n)}${onIt}${risk[n]?.label ? ` <span class="pjflag ${risk[n].cls}">${risk[n].label}</span>` : ''}</td>${lapCell(n, L, lv)}${[0, 1, 2].map(i => secCell(cur[i], pb[i], i, lv?.cur, !!arr(L.Sectors)[i]?.OverallFastest)).join('')}${bestCell}${tail}` };
   });
 
@@ -1121,7 +1125,7 @@ function projMount(el) {
   if (!el.querySelector('#pjFrame') || el.dataset.pjRace !== `${race}:${prize}`) {
     el.innerHTML = `<div id="pjFrame"><div id="pjClock"></div><div id="pjPole"></div><p class="note" id="pjNote"></p>
       <div class="${race ? '' : 'pjgrid'}"><div><p class="note" id="pjEmpty"></p>
-      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the quickest: pole in Q3, top of the part in Q1 and Q2, the fastest lap in other sessions">${quali ? (qPart === 3 ? 'Pole?' : 'P1?') : 'Fastest?'}</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjScore"></div><div id="pjLearn"></div></div>
+      <table class="et wide pj"><thead><tr><th>Driver</th><th title="How far round the lap the car is. The marks are the sector lines.">Lap</th><th class="t">S1</th><th class="t">S2</th><th class="t pjs3">S3</th><th class="t pjbest">Best now</th><th class="t">Projected</th><th class="t pjvs">vs best</th>${race ? '' : '<th class="t">Position</th>'}<th class="t" title="Chance this lap ends up as the quickest: pole in Q3, top of the part in Q1 and Q2, the fastest lap in other sessions">${quali ? (qPart === 3 ? 'Pole?' : 'P1?') : 'Fastest?'}</th></tr></thead><tbody id="pjBody"></tbody></table><div id="pjStory"></div><div id="pjScore"></div><div id="pjLearn"></div></div>
       ${race ? '' : `<div class="ecard"><h4>Leaderboard + laps in progress</h4><p class="note">Best laps so far. Highlighted rows are laps happening now, placed where they would land.</p><table class="et"><tbody id="pjBoard"></tbody></table></div>`}</div></div>`;
     el.dataset.pjRace = `${race}:${prize}`;
     el.dataset.html = '';
@@ -1136,6 +1140,7 @@ function projMount(el) {
   setHtml('pjPole', sessionKind() === 'quali' ? poleHtml() : '');
   setHtml('pjEmpty', cars.length ? '' : 'No cars are out on track right now.');
   setHtml('pjScore', scoreHtml());
+  setHtml('pjStory', window.lapStory?.storyHtml() || '');
   const pjBody = el.querySelector('#pjBody');
   pjBody.closest('table').style.display = cars.length ? '' : 'none';
   keyedRows(pjBody, rows);

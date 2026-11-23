@@ -149,3 +149,19 @@ The recorder can run on an always-on Linux server (Oracle Cloud Always Free, ARM
 - **Cross-engine results:** for the same input, Chrome's race call differs from Node's in 10 of 80 values, by at most 2.2e-16 (the last binary digit; different V8 versions). The reference check (tests/fixtures/race-golden.json) allows 1e-12.
 - **Effect on the browser's latency:** a server has none, because the browser never connects to it. When the recorder runs on the same Mac, the page benchmark was unchanged in 4 of 5 runs. In 1 run, while the recorder's headless Chrome was starting, frames were delayed by up to 268 ms (P99 186 ms); update processing and main-thread stalls were unaffected. On the Mac, the recorder starts 25 min before a session.
 - **Unknown until tried:** whether F1 accepts connections from Oracle Cloud (it refuses GitHub's). Check with `tools/server-preflight.mjs` first.
+
+## 10. Priority 1, part 1: the qualifying lap story (display only, 23 Nov)
+
+lapstory.js follows each lap through qualifying and practice. It reads the existing projection and pole call and changes neither; production model numbers are unchanged.
+
+- **Momentum:** a small line beside each driver on a lap shows their pole chance through the lap (in practice: the projection against the time to beat), with the change since S1. It appears on the Projected tab and in the pole card.
+- **Explanations:** every sector, and every move of 5 points or more in a lap's chance, gets a reason:
+  - the sector against the driver's best before it (F1 updates the best at the same moment, so the page keeps its own copy from before);
+  - someone setting a time (slower than this lap, or how much this lap now needs);
+  - a rival's lap that is quicker or fading;
+  - a flag.
+
+  They appear in a "What changed" card, newest first, and are recorded (page.jsonl, kind story).
+- **Lap states:** finished (real time against the projection after S1 or S2), aborted (backed off or pitted, and in which sector), deleted (matched to race control's "TIME … DELETED" message). Each stays on the driver's row for 90 s.
+- **Cost:** 0.1 ms P50, 0.7 ms max per update, measured on a Q3 replay. The pole call, measured on the same replay for the first time: P50 5.3 ms, P99 11 ms, max 12.8 ms. It runs on the main thread several times per sector batch; it's a candidate for the worker.
+- **Test data:** tools/laps-to-recording.mjs turns an old lap summary (data/session-*.json) into a replayable recording at sector level only (Vegas qualifying, 11416). This is good for checking the display, not for measuring accuracy. That needs real recordings, starting with Qatar.

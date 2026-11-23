@@ -326,6 +326,15 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   .et{font-size:11px}
   .et td,.et th{padding:5px 4px}
 }
+
+/* Lap story: chance/projection through the lap, and how laps ended (lapstory.js) */
+.lsx{display:inline-flex;align-items:center;gap:3px;margin-left:6px;vertical-align:middle;font-size:11px}
+.lsx svg{display:block;overflow:visible}
+.lsx polyline{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.lsx.up{color:var(--green)} .lsx.down{color:var(--red)} .lsx.flat{color:var(--muted)}
+.lsend{font-weight:600} .lsend.ok{color:var(--green)} .lsend.abt{color:var(--amber,#ffae1a)} .lsend.del{color:var(--red)}
+td.lsendcell{text-align:left;white-space:nowrap}
+.lstory td{vertical-align:top} .lstory td:last-child{white-space:normal}
 </style>
 </head>
 <body>
@@ -400,7 +409,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=52"></script>
+<script src="direct.js?v=53"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -988,12 +997,13 @@ function f1tvSetup(){
   location.reload();
 }
 </script>
-<script src="latency.js?v=52"></script>
-<script src="racesim.js?v=52"></script>
-<script src="engineer.js?v=52"></script>
-<script src="alerts.js?v=52"></script>
-<script src="kalshi-web.js?v=52"></script>
-<script src="pagelog.js?v=52"></script>
-<script src="rain.js?v=52"></script>
+<script src="latency.js?v=53"></script>
+<script src="racesim.js?v=53"></script>
+<script src="engineer.js?v=53"></script>
+<script src="alerts.js?v=53"></script>
+<script src="lapstory.js?v=53"></script>
+<script src="kalshi-web.js?v=53"></script>
+<script src="pagelog.js?v=53"></script>
+<script src="rain.js?v=53"></script>
 </body>
 </html>
