@@ -206,7 +206,9 @@
     return { cars: out, deg: b.deg, sc: pScRace };
   }
 
-  const RaceSim = { P, LIFE, CAL, build, run };
+  // Bump when the model changes, so recordings say which model made each prediction.
+  const VERSION = 'race-2026-11-23';
+  const RaceSim = { VERSION, P, LIFE, CAL, build, run };
   root.RaceSim = RaceSim;
   if (typeof module !== 'undefined') module.exports = RaceSim;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -70,3 +70,64 @@ test('Kalshi Worker: only this site, only F1 markets, GET only', async () => {
   assert.equal((await call('/prices?events=KXF1POLE-LUSA26', 'https://zknfz.github.io', 'POST')).status, 405);
   assert.equal((await call('/anything', 'https://zknfz.github.io')).status, 404);
 });
+
+// ---------- Recording and replay ----------
+import os from 'node:os';
+import path from 'node:path';
+import { createRecorder, readFeed, stateAt } from '../recorder.mjs';
+
+const frameOf = (topic, data, sent) => JSON.stringify({ type: 1, target: 'feed', arguments: [topic, data, sent] });
+async function sampleRecording() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-test-'));
+  const rec = createRecorder({ dataDir: tmp, log: () => {} });
+  const snapshot = JSON.stringify({ type: 3, invocationId: '0', result: { SessionInfo: { Key: 9, Name: 'Qualifying', Meeting: { Name: 'Test GP' } }, TimingData: { Lines: { '1': { Position: '1', NumberOfLaps: 3 } } } } });
+  rec.frame(1, snapshot, 1000);            // arrives before the session is known: held, then written
+  rec.open({ Key: 9, Name: 'Qualifying', Meeting: { Name: 'Test GP' }, StartDate: '2026-11-28T16:00:00' });
+  const u1 = frameOf('TimingData', { Lines: { '1': { NumberOfLaps: 4 } } }, '2026-11-28T16:00:01.000Z');
+  rec.frame(1, u1, 2000); rec.frame(2, u1, 2005); // same update from two connections
+  rec.frame(1, frameOf('TimingData', { Lines: { '1': { Position: '2' } } }, '2026-11-28T16:00:02.000Z'), 3000);
+  rec.page({ kind: 'pole', cars: [] });
+  rec.close('test');
+  await new Promise(r => setTimeout(r, 100));
+  return path.join(tmp, 'rec', fs.readdirSync(path.join(tmp, 'rec'))[0]);
+}
+
+test('recorder: every frame is written with receipt time and connection, in order', async () => {
+  const dir = await sampleRecording();
+  const got = []; for await (const f of readFeed(path.join(dir, 'feed.tsv'))) got.push(f);
+  assert.equal(got.length, 4);
+  assert.deepEqual(got.map(f => f.r), [1000, 2000, 2005, 3000]);
+  assert.deepEqual(got.map(f => f.c), ['1', '1', '2', '1']);
+  assert.ok(fs.readFileSync(path.join(dir, 'page.jsonl'), 'utf8').includes('"kind":"pole"'));
+  assert.ok(fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').includes('"ev":"open"'));
+});
+
+test('replay: state at a moment uses only what had arrived by then, duplicates counted once', async () => {
+  const dir = await sampleRecording();
+  const at1 = await stateAt(dir, 1500), at2 = await stateAt(dir, 2500), end = await stateAt(dir);
+  assert.equal(at1.state.TimingData.Lines['1'].NumberOfLaps, 3);
+  assert.equal(at2.state.TimingData.Lines['1'].NumberOfLaps, 4);
+  assert.equal(at2.updates, 1); // the copy from connection 2 is not applied twice
+  assert.equal(end.state.TimingData.Lines['1'].Position, '2');
+});
+
+test('replay: a line cut short by a crash is skipped, the rest still read', async () => {
+  const dir = await sampleRecording();
+  fs.appendFileSync(path.join(dir, 'feed.tsv'), '4000\t12.5\t1\t{"type":1,"tar'); // no newline, cut off
+  const got = []; for await (const f of readFeed(path.join(dir, 'feed.tsv'))) got.push(f);
+  assert.equal(got.length, 4);
+  const end = await stateAt(dir);
+  assert.equal(end.state.TimingData.Lines['1'].Position, '2');
+});
+
+test('restart: a second recorder appends to the same session folder', async () => {
+  const dir = await sampleRecording();
+  const dataDir = path.dirname(path.dirname(dir));
+  const rec2 = createRecorder({ dataDir, log: () => {} });
+  rec2.open({ Key: 9, Name: 'Qualifying', Meeting: { Name: 'Test GP' }, StartDate: '2026-11-28T16:00:00' });
+  rec2.frame(1, frameOf('TimingData', { Lines: { '1': { Position: '1' } } }, '2026-11-28T16:00:05.000Z'), 6000);
+  rec2.close('test'); await new Promise(r => setTimeout(r, 100));
+  const got = []; for await (const f of readFeed(path.join(dir, 'feed.tsv'))) got.push(f);
+  assert.equal(got.length, 5);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')).relayRuns.length, 2);
+});

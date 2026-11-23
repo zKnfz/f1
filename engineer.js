@@ -1377,6 +1377,7 @@ try {
   raceWorker = new Worker('racesim-worker.js' + RACE_V);
   raceWorker.onmessage = e => {
     const { id, v, ms, error } = e.data;
+    if (e.data.shadow) { es.dispatchEvent(new CustomEvent('raceshadow', { detail: e.data })); return; }
     if (error) { console.error('race call worker:', error); raceWorker = null; return; }
     if (id !== raceWant) return; // inputs moved on while it ran
     raceMemo = { id, v: { ...v, fin: id.endsWith(':fin') } };
@@ -1398,7 +1399,7 @@ function raceCall() {
   if (raceWorker) {
     // A result for a different session would be wrong, not just old.
     if (raceMemo.id && raceMemo.id.split(':')[0] !== id.split(':')[0]) raceMemo = { id: null, v: null };
-    if (raceWant !== id || performance.now() - raceSentAt > 2000) { raceWant = id; raceSentAt = performance.now(); raceWorker.postMessage({ id, inp, P: { ...RaceSim.P } }); }
+    if (raceWant !== id || performance.now() - raceSentAt > 2000) { raceWant = id; raceSentAt = performance.now(); raceWorker.postMessage({ id, inp, P: { ...RaceSim.P }, shadow: window.pitwallShadow?.race || [] }); }
     return raceMemo.v;
   }
   const t0 = performance.now();

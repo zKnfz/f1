@@ -1,5 +1,6 @@
 // Decides whether an F1 session is on, or about to start, so the recorder should run.
-// Uses the public Jolpica (Ergast) schedule. Prints the answer and, on GitHub Actions,
+// Uses the public Jolpica (Ergast) schedule. Jolpica refuses requests without a named
+// User-Agent (since Nov 2026), so every request sends one. Prints the answer and, on GitHub Actions,
 // writes it to the step outputs: record=true|false, wait=<minutes to wait for the start>,
 // max=<minutes to record at most>, name=<session>.
 import { appendFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ function out(o) {
 async function schedule() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await fetch('https://api.jolpi.ca/ergast/f1/current.json?limit=100', { signal: AbortSignal.timeout(20000) });
+      const r = await fetch('https://api.jolpi.ca/ergast/f1/current.json?limit=100', { headers: { 'User-Agent': 'pitwall-live-timing' }, signal: AbortSignal.timeout(20000) });
       if (r.ok) return (await r.json()).MRData.RaceTable.Races;
     } catch {}
     await new Promise(res => setTimeout(res, 3000));

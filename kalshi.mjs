@@ -36,9 +36,10 @@ async function findEvent(series, info) {
   return ok.find(e => !/settled|finalized|closed/i.test(e.status || '')) || ok[0] || null;
 }
 
-export function startKalshi({ getState, broadcast, dataDir }) {
+export function startKalshi({ getState, broadcast, dataDir, recDir = () => null, enabled = true }) {
   let setupAt = 0, sessionKey = null, events = {}, prices = {}, file = null, lastSite = 0, timer = null, slowUntil = 0;
-  const write = rec => file && fs.appendFile(file, JSON.stringify(rec) + '\n').catch(() => {});
+  // Into the session's recording folder when there is one (recorder.mjs), else data/.
+  const write = rec => { const f = recDir() ? path.join(recDir(), 'kalshi.jsonl') : file; return f && fs.appendFile(f, JSON.stringify(rec) + '\n').catch(() => {}); };
 
   async function setup(info) {
     sessionKey = info.Key; setupAt = Date.now(); events = {}; prices = {};
@@ -72,11 +73,12 @@ export function startKalshi({ getState, broadcast, dataDir }) {
           const code = String(x.ticker).split('-').pop();
           const p = [cents(x.yes_bid_dollars), cents(x.yes_ask_dollars), cents(x.last_price_dollars)];
           now[code] = p;
-          if (String(prices[m]?.[code]) !== String(p)) changed[code] = p;
+          // Recorded with Kalshi's own update time (source) next to ours (t, on receipt).
+          if (String(prices[m]?.[code]) !== String(p)) changed[code] = { p, u: x.updated_time || null, bidSize: +x.yes_bid_size_fp || null, askSize: +x.yes_ask_size_fp || null, status: x.status };
         }
         prices[m] = now;
         if (Object.keys(changed).length) {
-          write({ t: Date.now(), type: 'kalshi', m, p: changed });
+          write({ t: Date.now(), type: 'kalshi', m, fetchMs: +fetchMs.toFixed(1), p: changed });
           broadcast('kalshi', { at: Date.now(), prices, fetchMs });
         }
       } catch (err) {
@@ -85,7 +87,7 @@ export function startKalshi({ getState, broadcast, dataDir }) {
     }
   }
   const loop = async () => { try { await poll(); } catch {} timer = setTimeout(loop, EVERY); };
-  loop();
+  if (enabled) loop();
 
   return {
     prices: () => ({ at: Date.now(), prices }),

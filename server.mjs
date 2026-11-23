@@ -8,6 +8,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { startKalshi } from './kalshi.mjs';
+import { createRecorder, readFeed } from './recorder.mjs';
+import os from 'node:os';
+
+// Replay: REPLAY=data/rec/<session folder> node server.mjs  plays a recording back to the page
+// exactly as it arrived (SPEED=4 for 4x, FROM=600 to start 600 s in). Nothing is recorded or
+// saved over real data while replaying.
+const REPLAY = process.env.REPLAY || '';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8765;
@@ -105,6 +112,7 @@ async function connect(c) {
     }
   } catch (e) {
     console.error(`feed ${c.id} connect failed:`, e.message);
+    rec.event('connectFailed', { conn: c.id, error: e.message });
     return reconnect(c);
   }
   ws.onopen = () => {
@@ -114,41 +122,70 @@ async function connect(c) {
     c.ping = setInterval(() => ws.readyState === 1 && ws.send('{"type":6}' + RS), 15000);
   };
   ws.onmessage = e => {
-    const now = Date.now();
-    for (const part of String(e.data).split(RS)) {
-      if (!part) continue;
+    const now = Date.now(), parts = String(e.data).split(RS);
+    for (const part of parts) if (part) handleFrame(c, part, now);
+    // Recorded after the updates have gone out to the pages, so recording never delays them.
+    for (const part of parts) if (part) rec.frame(c.id, part, now);
+  };
+  ws.onclose = () => { clearInterval(c.ping); c.live = false; rec.event('closed', { conn: c.id }); updateStatus(); reconnect(c); };
+  ws.onerror = () => {};
+}
+let lastFrameAt = Date.now(), gapOpen = null;
+function handleFrame(c, part, now) {
       let m;
-      try { m = JSON.parse(part); } catch { continue; }
+      try { m = JSON.parse(part); } catch { return; }
       if (m.type === 1 && m.target === 'feed') {
+        lastFrameAt = now; // for gap detection: data, not keep-alive pings
         // Live update: only the first copy across all connections counts.
-        if (seen.has(part)) continue;
+        if (seen.has(part)) return;
         seen.set(part, now);
         const [topic, data, sentAt] = m.arguments;
         if (topic.endsWith('.z')) {
           // Positions and telemetry: decompressed here, sent on, never kept in the state.
           const d = unz(data);
           if (d) { broadcast('feed', [topic.slice(0, -2), d, sentAt]); if (!teleSeen++) console.log(new Date().toISOString(), `receiving ${topic.slice(0, -2)} (F1 TV sign-in works)`); }
-          continue;
+          return;
         }
         broadcast('feed', [topic, data, sentAt]); // send first, store after
         state[topic] = merge(state[topic], data);
         afterFeed(topic, data);
       } else if (m.type === 3 && m.invocationId === '0') {
-        if (m.error) { console.error('subscribe error:', m.error); continue; }
+        if (m.error) { console.error('subscribe error:', m.error); return; }
         // Take the full snapshot only when no other connection is already live,
         // so a reconnecting feed never rolls the state back.
-        if (!liveCount()) { state = m.result || {}; delete state['Position.z']; delete state['CarData.z']; broadcast('full', state); ensureHistory(); }
+        if (!liveCount()) { state = m.result || {}; delete state['Position.z']; delete state['CarData.z']; broadcast('full', state); ensureHistory(); rec.open(state.SessionInfo); }
+        else driftCheck(c, m.result || {});
         c.live = true; c.retry = 0;
+        rec.event('live', { conn: c.id, live: liveCount() });
         console.log(new Date().toISOString(), `feed ${c.id}: live (${liveCount()}/${FEEDS})`);
         updateStatus();
       } else if (m.type === 7) {
         console.error(`feed ${c.id} closed by server:`, m.error);
+        rec.event('serverClosed', { conn: c.id, error: m.error || null });
       }
-    }
-  };
-  ws.onclose = () => { clearInterval(c.ping); c.live = false; updateStatus(); reconnect(c); };
-  ws.onerror = () => {};
 }
+// Missed updates: a connection that (re)subscribes while another is live gets F1's full
+// snapshot. If that differs from the state built up from updates, some updates were lost.
+function driftCheck(c, snap) {
+  const diffs = [];
+  const a = snap.TimingData?.Lines || {}, b = state.TimingData?.Lines || {};
+  for (const n of Object.keys(a)) for (const k of ['Position', 'NumberOfLaps', 'InPit', 'Retired']) {
+    const x = a[n]?.[k], y = b[n]?.[k];
+    if (x !== undefined && String(x) !== String(y)) diffs.push(`${n}.${k}: snapshot ${x} vs ours ${y}`);
+  }
+  for (const [t, k] of [['LapCount', 'CurrentLap'], ['TrackStatus', 'Status'], ['SessionStatus', 'Status']])
+    if (snap[t]?.[k] !== undefined && String(snap[t][k]) !== String(state[t]?.[k])) diffs.push(`${t}.${k}: snapshot ${snap[t][k]} vs ours ${state[t]?.[k]}`);
+  // A difference can also be an update that is simply in flight; record it, don't overwrite.
+  rec.event('driftCheck', { conn: c.id, differences: diffs.length, sample: diffs.slice(0, 10) });
+  if (diffs.length) console.log(new Date().toISOString(), `feed ${c.id}: snapshot differs from our state in ${diffs.length} places`, diffs.slice(0, 3).join('; '));
+}
+// Gaps: no frame from any connection for 15 s while a session is running.
+setInterval(() => {
+  const running = /Started|Aborted/.test(state.SessionStatus?.Status || '');
+  const quiet = Date.now() - lastFrameAt;
+  if (!gapOpen && running && quiet > 15000) { gapOpen = lastFrameAt; rec.event('gap', { since: new Date(lastFrameAt).toISOString() }); console.log(new Date().toISOString(), 'feed: nothing received for 15 s'); }
+  else if (gapOpen && quiet < 5000) { rec.event('gapEnd', { seconds: +((Date.now() - gapOpen) / 1000).toFixed(1) }); gapOpen = null; }
+}, 2000).unref?.();
 function reconnect(c) {
   const wait = Math.min(30000, 2000 * 2 ** c.retry++) + Math.random() * 1000;
   setTimeout(() => connect(c), wait);
@@ -161,7 +198,8 @@ function startFeeds() {
 // ---------- Lap history ----------
 // F1's archive needs a login, so the relay keeps its own record of every completed
 // lap from the moment it starts. It is saved to data/ so a restart keeps it.
-const DATA = path.join(DIR, 'data');
+const DATA = REPLAY ? path.join(os.tmpdir(), 'pitwall-replay') : path.join(DIR, 'data');
+const rec = createRecorder({ dataDir: path.join(DIR, 'data'), enabled: !REPLAY });
 let history = { key: null, laps: {}, pits: {} };
 const watch = {}; // per driver: last recorded lap time, pit seen this lap, pending timer
 let saveTimer = null;
@@ -198,7 +236,7 @@ function saveSoon() {
 }
 
 function afterFeed(topic, data) {
-  if (topic === 'SessionInfo') return ensureHistory();
+  if (topic === 'SessionInfo') { rec.open(state.SessionInfo); return ensureHistory(); }
   if (!history.key) return;
   if (topic === 'TimingData') {
     for (const [num, u] of Object.entries(data?.Lines || {})) {
@@ -263,10 +301,10 @@ async function circuit(key, year) {
   return circuits.get(id);
 }
 
-const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA });
+const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), enabled: !REPLAY });
 
 // ---------- HTTP ----------
-const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js' };
+const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js', '/pagelog.js': 'pagelog.js', '/models/registry.json': 'models/registry.json' };
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/events') {
@@ -281,6 +319,16 @@ http.createServer(async (req, res) => {
     const ka = setInterval(() => res.write(': keepalive\n\n'), 15000);
     req.on('close', () => { clients.delete(res); clearInterval(ka); });
     return;
+  }
+  if (url.pathname === '/api/record' && req.method === 'POST') { // predictions, alerts, model versions from the recorder's page
+    let body = '';
+    req.on('data', ch => { body += ch; if (body.length > 2e6) req.destroy(); });
+    req.on('end', () => { try { for (const r of JSON.parse(body)) rec.page(r); } catch {} res.writeHead(204); res.end(); });
+    return;
+  }
+  if (url.pathname === '/api/recording') { // what is being recorded (for the recorder's status checks)
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ replay: REPLAY || null, recording: rec.stats() }));
   }
   if (url.pathname === '/api/sitelog' && req.method === 'POST') { // the site's own figures, for the Kalshi replay
     let body = '';
@@ -314,9 +362,49 @@ http.createServer(async (req, res) => {
   }
   const file = PAGES[url.pathname];
   if (!file) { res.writeHead(404); return res.end('Not found'); }
-  res.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8' });
+  res.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'text/html; charset=utf-8' });
   res.end(await fs.readFile(path.join(DIR, file)));
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`Pitwall live timing on http://127.0.0.1:${PORT}  (simulator: /sim)`);
-  startFeeds();
+  if (REPLAY) startReplay(); else startFeeds();
 });
+
+// A bug in one handler must not take the whole relay (and the recording) down.
+process.on('uncaughtException', e => { console.error(new Date().toISOString(), 'error:', e.stack || e); rec.event('error', { error: String(e.message || e) }); });
+process.on('unhandledRejection', e => { console.error(new Date().toISOString(), 'error:', e?.stack || e); rec.event('error', { error: String(e?.message || e) }); });
+// Stop cleanly: note it in the recording and flush the files.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  rec.event('relayStop', { signal: sig });
+  rec.close('relay stopped');
+  setTimeout(() => process.exit(0), 300);
+});
+
+// ---------- Replay ----------
+async function startReplay() {
+  const dir = path.resolve(REPLAY), speed = Number(process.env.SPEED) || 1, from = (Number(process.env.FROM) || 0) * 1000;
+  console.log(`replaying ${dir} at ${speed}x${from ? `, from ${from / 1000} s in` : ''}`);
+  setStatus('connecting');
+  // Connection events (a connection dropping) are part of what the relay knew, so replay them too.
+  let events = [];
+  try { events = (await fs.readFile(path.join(dir, 'events.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(e => e.ev === 'closed'); } catch {}
+  let kal = [];
+  try { kal = (await fs.readFile(path.join(dir, 'kalshi.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(e => e.type === 'kalshi'); } catch {}
+  const prices = {};
+  const pseudo = {};
+  const connOf = id => pseudo[id] ??= (conns.push({ id, retry: 0, live: false }), conns.at(-1));
+  let t0 = null, wall0 = null, n = 0, ei = 0, ki = 0;
+  for await (const { r, c, part } of readFeed(path.join(dir, 'feed.tsv'))) {
+    t0 ??= r;
+    const at = r - t0;
+    if (at >= from) {
+      wall0 ??= Date.now() - (at - from) / speed;
+      const due = wall0 + (at - from) / speed - Date.now();
+      if (due > 2) await new Promise(res => setTimeout(res, due));
+    }
+    while (ei < events.length && events[ei].r <= r) { const pc = pseudo[events[ei].conn]; if (pc) pc.live = false; ei++; }
+    while (ki < kal.length && kal[ki].t <= r) { const k = kal[ki++]; Object.assign(prices[k.m] ??= {}, Object.fromEntries(Object.entries(k.p).map(([code, v]) => [code, Array.isArray(v) ? v : v.p]))); broadcast('kalshi', { at: Date.now(), prices, replay: true }); }
+    handleFrame(connOf(c), part, Date.now());
+    n++;
+  }
+  console.log(`replay finished: ${n} frames`);
+}

@@ -13,7 +13,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function get(url) {
   for (let i = 0; i < 6; i++) {
     await sleep(700); // stay well inside the API's rate limit
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: { 'User-Agent': 'pitwall-live-timing' } });
     if (r.ok) return (await r.json()).MRData;
     if (r.status === 429) { await sleep(20000 * (i + 1)); continue; }
     throw new Error(`${r.status} ${url}`);

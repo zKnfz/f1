@@ -1,6 +1,6 @@
 # Pitwall architecture and audit
 
-Last updated: 23 Nov 2026 (after the Las Vegas GP, before Qatar).
+Last updated: 23 Nov 2026 (after the Las Vegas GP, before Qatar; recording added, section 8).
 Everything below was checked in the code or measured; nothing is estimated unless it says so.
 
 ## 1. How data flows today
@@ -113,3 +113,25 @@ classified finish vs. running at the end).
 6. Strategy what-ifs; trading interface only if wanted, manual confirmation, never automatic.
 
 Rule kept throughout: no model changes during a race weekend.
+
+## 8. Recording and replay (added 23 Nov, before Qatar)
+
+**Before:** only lap summaries (data/session-*.json) and Kalshi changes were saved. There was no raw feed, so nothing could be replayed. The relay ran only while the recorder job was running, and the Mac sleeps after 1 minute idle.
+
+**Now:** recorder.mjs, inside the relay, writes one folder per session, data/rec/<year>-<meeting>-<session>-<key>/:
+
+| File | What | Timestamps |
+|---|---|---|
+| feed.tsv | every raw frame from all 3 F1 connections, duplicates included, including Position.z/CarData.z | receipt epoch ms + monotonic ms; F1's send time is inside each frame |
+| events.jsonl | relay start/stop, connection live/closed/failed, gaps > 15 s, missed-update checks (each reconnect's snapshot compared with our state), errors | epoch + monotonic |
+| page.jsonl | the recorder page's race calls, shadow-model calls, pole calls, alerts, model versions and learned weights | page epoch + monotonic, relay receipt |
+| kalshi.jsonl | every Kalshi price change, with bid/ask sizes and status | Kalshi's updated_time + our receipt + fetch ms |
+| meta.json | session, every relay run | |
+
+- **Cost:** 0.5 µs per frame on the relay. It is written after the frame is broadcast. The page benchmark is unchanged (processed P99 3.0 ms, on screen P99 18 ms, no stalls).
+- **Durability:** files are fsynced every 5 s. A crash loses at most a few seconds, and a cut-off line is skipped on read. A restart appends to the same folder; tested with kill -9 against the live feed. record-and-share.sh restarts a crashed relay within 2 s and holds the Mac awake (`caffeinate -is -w`) while the relay runs.
+- **Sleep:** launchd cannot wake a sleeping Mac. `node tools/schedule-wakes.mjs | sudo sh` schedules a wake 35 min before every session in the next 3 weeks. It only works on power, with the lid open or a display attached.
+- **Replay:** `REPLAY=data/rec/<dir> SPEED=10 FROM=600 node server.mjs` plays the frames through the same handler the live relay uses, to the normal page. Nothing is recorded or saved over real data. The page state was checked identical to the recording's final state, on a real F1 recording and on a synthetic one with duplicates and a dropped connection. `node tools/replay-state.mjs <dir> <time|seconds>` gives the exact state at any moment.
+- **Checks:** `node tools/recording-report.mjs [dir]` reports frames per connection, duplicates, F1 send→receipt delay, silences, drops, gaps, missed-update checks, laps seen vs F1's lap count, site records and Kalshi coverage. It runs automatically after each session (data/recorder.log).
+- **Shadow models:** models/registry.json lists challengers. The recorder page's worker runs them after the production answer has been sent. Their answers go only to page.jsonl, never to the screen. `node tools/evaluate-shadow.mjs` scores production against the challengers on finished races. Promotion happens only between race weekends.
+- **Found and fixed:** Jolpica (the schedule) started refusing requests without a named User-Agent, so the recorder's schedule check was saying "schedule unavailable" and would not have started for Qatar. All Jolpica calls now send one.

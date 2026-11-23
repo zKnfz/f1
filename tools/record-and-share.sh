@@ -34,13 +34,21 @@ relay_pid() { [ -f data/relay.pid ] && kill -0 "$(cat data/relay.pid)" 2>/dev/nu
 case "$check" in
   *'"record":true'*)
     if ! lsof -ti tcp:8765 >/dev/null 2>&1; then
-      nohup node server.mjs >> data/relay.log 2>&1 &
+      # Restart the relay straight away if it ever crashes (a clean stop exits 0 and ends the
+      # loop). It appends to the same session recording, and the gap is logged in events.jsonl.
+      nohup bash -c 'while true; do node server.mjs; code=$?; [ $code -eq 0 ] && break; echo "$(date) relay exited ($code), restarting"; sleep 2; done' >> data/relay.log 2>&1 &
       echo $! > data/relay.pid
-      echo "$(date) Relay started (pid $!)"
+      # Keep the Mac awake while the relay runs (on power; a closed lid on battery still sleeps).
+      command -v caffeinate >/dev/null && nohup caffeinate -is -w $! >/dev/null 2>&1 &
+      echo "$(date) Relay started (pid $(cat data/relay.pid))"
     fi ;;
   *'schedule unavailable'*) ;; # don't stop anything on a failed schedule lookup
   *)
-    if pid=$(relay_pid); then kill "$pid" && echo "$(date) Relay stopped (no session on)"; rm -f data/relay.pid; fi ;;
+    if pid=$(relay_pid); then
+      # Stop the relay itself (it exits cleanly, which ends the restart loop), then the loop.
+      lsof -ti tcp:8765 | xargs kill 2>/dev/null; sleep 1; kill "$pid" 2>/dev/null
+      echo "$(date) Relay stopped (no session on)"; rm -f data/relay.pid
+    fi ;;
 esac
 
 case "$check" in *'"record":true'*) ;; *) exit 0 ;; esac
@@ -56,6 +64,8 @@ echo "$(date) Recording: $name (wait ${wait} min, at most ${max} min)"
 keep=""; command -v caffeinate >/dev/null && keep="caffeinate -i"
 $keep node tools/record.mjs --wait="$wait" --max="$max" || true
 grep -q '"note": "session over"' data/last-run.json 2>/dev/null && echo "$name" >> data/recorded.txt
+# Check the raw recording: gaps, drops, missed updates, missing laps (into the log).
+node tools/recording-report.mjs >> data/recorder.log 2>&1 || echo "$(date) recording report failed" >> data/recorder.log
 
 git add learned
 if git diff --cached --quiet; then echo "$(date) Nothing new to share."; exit 0; fi

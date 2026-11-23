@@ -1,0 +1,10 @@
+{
+  "note": "Production models are the ones in racesim.js / engineer.js. Challengers listed here run in shadow mode on the recorder only: same inputs, answers recorded to data/rec/*/page.jsonl, never shown. Promote one only after tools/evaluate-shadow.mjs shows it is better on sessions it has not seen, and only between race weekends.",
+  "production": { "race": "race-2026-11-23", "quali": "quali-proj-v4" },
+  "shadow": {
+    "race": [
+      { "name": "race-uncalibrated", "why": "the simulation without the logistic correction: measures what the correction adds, live", "P": { "cal": 0 } },
+      { "name": "race-8000-runs", "why": "twice the runs: measures how much of the movement is simulation noise", "P": { "runs": 8000 } }
+    ]
+  }
+}

@@ -72,6 +72,7 @@
     setTimeout(() => el.classList.add('out'), level === 'red' ? 25000 : 14000);
     setTimeout(() => el.remove(), level === 'red' ? 25600 : 14600);
     beep(level);
+    es.dispatchEvent(new CustomEvent('alert', { detail: { key, level, text: el.innerText.replace(/\s+/g, ' ').trim() } }));
   }
   window.pitwallAlert = fire; // for testing from the console
 
@@ -212,6 +213,7 @@
     poleQueued = false;
     if (!ready || kind() !== 'quali' || typeof poleCall !== 'function') return;
     const p = poleCall();
+    if (p) es.dispatchEvent(new CustomEvent('polecall', { detail: p }));
     if (!p || p.part !== 3) { poleHolder = null; return; }
     // Provisional pole: the fastest time set in Q3 so far.
     const timed = p.cars.filter(c => c.best).sort((a, b) => a.best - b.best);

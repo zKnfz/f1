@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [year, round, meeting] = process.argv.slice(2);
 if (!meeting) { console.error('usage: node tools/fetch-qpace.mjs <year> <round> <meetingKey>'); process.exit(1); }
-const r = await fetch(`https://api.jolpi.ca/ergast/f1/${year}/${round}/qualifying.json`);
+const r = await fetch(`https://api.jolpi.ca/ergast/f1/${year}/${round}/qualifying.json`, { headers: { 'User-Agent': 'pitwall-live-timing' } });
 const race = (await r.json()).MRData.RaceTable.Races[0];
 if (!race) { console.error('No qualifying results yet.'); process.exit(1); }
 const secs = t => { if (!t) return null; const p = String(t).split(':'); return p.length === 2 ? +p[0] * 60 + +p[1] : +p[0]; };

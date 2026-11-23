@@ -154,3 +154,13 @@ fetch, main-thread stalls. The race Monte Carlo runs in a background worker
 - Tests: `node --test tests/*.test.mjs`
 - Pipeline benchmark: `node server.mjs`, then `node tools/bench-pipeline.mjs`
 - Architecture, audit and plan: `docs/ARCHITECTURE.md`
+
+## Recording and replay
+
+While the relay runs, every F1 frame, connection event, prediction, alert and Kalshi price is saved to `data/rec/<session>/`. This stays local and is never pushed.
+
+- `node tools/recording-report.mjs`: checks the latest recording for gaps, drops and missing laps.
+- `REPLAY=data/rec/<dir> SPEED=10 node server.mjs`: replays a session at http://127.0.0.1:8765.
+- `node tools/replay-state.mjs data/rec/<dir> 900`: shows what the site knew 900 s in.
+- `node tools/schedule-wakes.mjs | sudo sh`: wakes the Mac before each session (needs power).
+- `node tools/evaluate-shadow.mjs`: scores the live race model against the shadow challengers.
