@@ -31,22 +31,26 @@ jobs:
         run: sudo bash deploy/oracle/install.sh
       - name: Services running, crash recovery, health and maintenance
         run: |
-          set -x
+          note() { echo "::notice title=$1::$2"; }
           sleep 15
-          systemctl is-active pitwall-relay.service
-          systemctl list-timers 'pitwall*' --no-pager
-          curl -sf http://127.0.0.1:8765/api/health
+          note relay "$(systemctl is-active pitwall-relay.service)"
+          note timers "$(systemctl list-timers 'pitwall*' --no-pager --no-legend | awk '{print $NF}' | tr '\n' ' ')"
+          h=$(curl -sf http://127.0.0.1:8765/api/health) && note health "$h" || { note health "no answer"; exit 1; }
           pid=$(systemctl show -p MainPID --value pitwall-relay.service)
           sudo kill -9 "$pid"; sleep 6
           new=$(systemctl show -p MainPID --value pitwall-relay.service)
-          [ "$new" != "$pid" ] && [ "$new" != 0 ] && echo "relay restarted by systemd: $pid -> $new"
-          curl -sf http://127.0.0.1:8765/api/health
-          sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/health.mjs' || true
-          sudo -u pitwall sudo -n systemctl start pitwall-maintain.service && cat /opt/pitwall/data/maintain.json
-          sudo systemctl start pitwall-session.service; sleep 3; sudo tail -5 /opt/pitwall/data/session.log || true
+          if [ "$new" != "$pid" ] && [ "$new" != 0 ] && curl -sf http://127.0.0.1:8765/api/health >/dev/null; then note crash "relay killed ($pid), systemd restarted it ($new), answering"; else note crash "NOT restarted"; exit 1; fi
+          note healthcheck "$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/health.mjs' 2>&1 | tail -1)"
+          sudo -u pitwall sudo -n systemctl start pitwall-maintain.service && note maintain "$(sudo cat /opt/pitwall/data/maintain.json | tr -d '\n')"
+          sudo systemctl start pitwall-session.service; sleep 5
+          note session "$(sudo tail -3 /opt/pitwall/data/session.log | tr '\n' ' ') state=$(systemctl is-active pitwall-session.service)"
       - name: What this network gets from F1 (expected to be refused on GitHub)
         continue-on-error: true
-        run: sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/server-preflight.mjs'
+        run: |
+          out=$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/server-preflight.mjs' 2>&1); echo "$out"
+          echo "::notice title=preflight::$(echo "$out" | tr '\n' ' ')"
       - name: Logs
         if: always()
-        run: sudo tail -40 /opt/pitwall/data/relay.log /opt/pitwall/data/health.log 2>/dev/null || true
+        run: |
+          sudo tail -40 /opt/pitwall/data/relay.log /opt/pitwall/data/health.log 2>/dev/null || true
+          echo "::notice title=relaylog::$(sudo tail -8 /opt/pitwall/data/relay.log 2>/dev/null | tr '\n' ' ')"
