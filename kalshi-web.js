@@ -37,10 +37,12 @@
     if (info.Key !== key || (!Object.keys(events).length && Date.now() - setupAt > 300000)) await setup(info);
     if (/Finalised|Ends/.test(state.SessionStatus?.Status || '') || !Object.keys(events).length) return;
     try {
+      const t0 = performance.now();
       const d = await get(`/prices?events=${Object.values(events).join(',')}`);
+      const fetchMs = performance.now() - t0;
       const prices = {};
       for (const [m, ev] of Object.entries(events)) if (d.prices?.[ev]) prices[m] = d.prices[ev];
-      es.dispatchEvent(new CustomEvent('kalshi', { detail: { at: Date.now(), prices } }));
+      es.dispatchEvent(new CustomEvent('kalshi', { detail: { at: Date.now(), prices, fetchMs } }));
     } catch (e) { if (e.status === 429) slowUntil = Date.now() + 10000; }
   }
   // Every 1.5 s while the page is visible, every 10 s when it is in the background.

@@ -1367,16 +1367,44 @@ function raceInputs() {
     scNow: state.TrackStatus?.Status === '4', ref, cars };
 }
 let raceMemo = { id: null, v: null };
+// The Monte Carlo runs in a background worker (racesim-worker.js). raceCall() returns the latest
+// finished result straight away and, when the inputs have moved on, asks the worker for a new one;
+// when it arrives the panels redraw and a 'racecall' event goes out. If workers aren't available
+// it falls back to computing here, as before.
+const RACE_V = (document.currentScript?.src.match(/\?v=[\w.]+/) || [''])[0];
+let raceWorker = null, raceWant = null, raceSentAt = 0;
+try {
+  raceWorker = new Worker('racesim-worker.js' + RACE_V);
+  raceWorker.onmessage = e => {
+    const { id, v, ms, error } = e.data;
+    if (error) { console.error('race call worker:', error); raceWorker = null; return; }
+    if (id !== raceWant) return; // inputs moved on while it ran
+    raceMemo = { id, v: { ...v, fin: id.endsWith(':fin') } };
+    window.pitwallLatency?.note('raceCall', ms);
+    window.pitwallLatency?.note('raceCallTurnaround', performance.now() - raceSentAt);
+    engDirty = true;
+    es.dispatchEvent(new CustomEvent('racecall'));
+  };
+  raceWorker.onerror = err => { console.error('race call worker failed; computing on the page instead', err.message); raceWorker = null; };
+} catch { raceWorker = null; }
 function raceCall() {
   if (!window.RaceSim || !state.TimingData?.Lines) return null;
   // Over once the leader has taken the flag on the last lap.
   const lc = state.LapCount || {}, fin = +lc.CurrentLap >= +lc.TotalLaps && arr(state.RaceControlMessages?.Messages).some(m => m.Flag === 'CHEQUERED');
-  const id = `${hist.key}:${lc.CurrentLap}:${state.TrackStatus?.Status}:${Object.keys(qualiPace()).length}:${Math.floor(Date.now() / 5000)}`;
+  const id = `${hist.key}:${lc.CurrentLap}:${state.TrackStatus?.Status}:${Object.keys(qualiPace()).length}:${Math.floor(Date.now() / 5000)}${fin ? ':fin' : ''}`;
   if (raceMemo.id === id) return raceMemo.v;
   const inp = raceInputs();
   if (fin) inp.lapsLeft = 0;
+  if (raceWorker) {
+    // A result for a different session would be wrong, not just old.
+    if (raceMemo.id && raceMemo.id.split(':')[0] !== id.split(':')[0]) raceMemo = { id: null, v: null };
+    if (raceWant !== id || performance.now() - raceSentAt > 2000) { raceWant = id; raceSentAt = performance.now(); raceWorker.postMessage({ id, inp, P: { ...RaceSim.P } }); }
+    return raceMemo.v;
+  }
+  const t0 = performance.now();
   const b = RaceSim.build(inp), res = RaceSim.run(b);
   const v = { ...res, inp, fin, byN: Object.fromEntries(b.cars.map(c => [c.n, c])) };
+  window.pitwallLatency?.note('raceCall', performance.now() - t0);
   raceMemo = { id, v };
   return v;
 }

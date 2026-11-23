@@ -187,6 +187,22 @@
       for (let it = 0; it < 30; it++) { const sum = soft.reduce((a, p) => a + Math.min(1, p * f), 0); f *= total / sum; }
       out.forEach((o, i) => { o[k] = Math.min(1, soft[i] * f); });
     }
+    // Each market is corrected on its own, which can leave e.g. top 5 a point above top 10.
+    // Finishing top 3 includes winning, and so on, so keep them in order.
+    // Where two are out of order, both take their average (pool-adjacent violators: the
+    // smallest change that puts them in order).
+    const K = ['win', 'top3', 'top5', 'top10'];
+    for (const o of out) {
+      const blocks = [];
+      for (const k of K) {
+        blocks.push({ v: o[k], n: 1, ks: [k] });
+        while (blocks.length > 1 && blocks.at(-2).v > blocks.at(-1).v) {
+          const b2 = blocks.pop(), b1 = blocks.pop();
+          blocks.push({ v: (b1.v * b1.n + b2.v * b2.n) / (b1.n + b2.n), n: b1.n + b2.n, ks: [...b1.ks, ...b2.ks] });
+        }
+      }
+      for (const bl of blocks) for (const k of bl.ks) o[k] = bl.v;
+    }
     return { cars: out, deg: b.deg, sc: pScRace };
   }
 

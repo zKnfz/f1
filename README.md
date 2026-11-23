@@ -143,3 +143,14 @@ node tools/fetch-qpace.mjs <year> <round> <meetingKey>
 - Lap history only covers what was recorded while the page or relay was running,
   because F1's archive of past sessions needs a login.
 - This is an unofficial fan project, not affiliated with Formula 1.
+
+## Latency monitor, tests and benchmark
+
+Click **DELAY** in the header for measured latency (P50/P95/P99, last 5 minutes): F1 send →
+received, received → processed, received → on screen, pole and race call compute times, Kalshi
+fetch, main-thread stalls. The race Monte Carlo runs in a background worker
+(`racesim-worker.js`) so it never holds up a timing update.
+
+- Tests: `node --test tests/*.test.mjs`
+- Pipeline benchmark: `node server.mjs`, then `node tools/bench-pipeline.mjs`
+- Architecture, audit and plan: `docs/ARCHITECTURE.md`

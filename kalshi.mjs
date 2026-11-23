@@ -61,9 +61,12 @@ export function startKalshi({ getState, broadcast, dataDir }) {
     // Markets sometimes open late: look again every 5 minutes until some are found.
     if (info.Key !== sessionKey || (!Object.keys(events).length && Date.now() - setupAt > 300000)) await setup(info);
     if (/Finalised|Ends/.test(st.SessionStatus?.Status || '') || Date.now() < slowUntil) return;
+    let fetchMs = null;
     for (const [m, ev] of Object.entries(events)) {
       try {
+        const t0 = performance.now();
         const d = await get(`/markets?event_ticker=${ev}&limit=60`);
+        fetchMs = performance.now() - t0;
         const now = {}, changed = {};
         for (const x of d.markets || []) {
           const code = String(x.ticker).split('-').pop();
@@ -74,7 +77,7 @@ export function startKalshi({ getState, broadcast, dataDir }) {
         prices[m] = now;
         if (Object.keys(changed).length) {
           write({ t: Date.now(), type: 'kalshi', m, p: changed });
-          broadcast('kalshi', { at: Date.now(), prices });
+          broadcast('kalshi', { at: Date.now(), prices, fetchMs });
         }
       } catch (err) {
         if (err.slow) { slowUntil = Date.now() + 10000; console.log(new Date().toISOString(), 'kalshi: rate limited, pausing 10 s'); return; }

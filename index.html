@@ -60,6 +60,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;padding:16p
 @media (max-width:640px){#alerts{bottom:10px;right:10px;width:calc(100vw - 20px)} .al{font-size:13px;padding:8px 10px} #alerts .al:nth-child(n+3){display:none}}
 .f1x{display:block;color:var(--amber);font-weight:600;margin-bottom:3px} .f1x.bad{color:var(--red)}
 .kp{display:block;font:500 10.5px 'JetBrains Mono',monospace;color:var(--dim);margin-top:1px} .kp.kup{color:var(--green)} .kp.kdn{color:var(--red)}
+#latPanel{position:fixed;top:64px;right:14px;z-index:61;width:min(460px,calc(100vw - 28px));max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 12px 32px rgba(0,0,0,.5)}
+#latPanel .aphead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;font-size:13px}
+table.lat{width:100%;border-collapse:collapse;font-size:12.5px} table.lat th{color:var(--dim);font-weight:500;text-align:right;padding:3px 6px} table.lat th:first-child{text-align:left}
+table.lat td{padding:4px 6px;border-top:1px solid var(--line);text-align:right;white-space:nowrap} table.lat td:first-child{text-align:left;white-space:normal} table.lat td small{display:block;color:var(--dim);font-size:10.5px}
 .teletag{padding:6px 14px 10px;font-size:11px;color:var(--dim)} .teletag b{color:var(--green);font-weight:600}
 .teletag button{background:none;border:1px solid var(--line);color:var(--muted);border-radius:5px;padding:2px 7px;font:inherit;cursor:pointer;margin-left:4px}
 .teletag button:hover{color:var(--text);border-color:var(--muted)}
@@ -396,7 +400,7 @@ footer{color:var(--dim);padding:0 16px 20px;font-size:11px;line-height:1.6}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=50"></script>
+<script src="direct.js?v=51"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -417,7 +421,11 @@ const arr = x => Array.isArray(x) ? x : (x && typeof x==='object') ? Object.keys
 // on its own (for example GitHub Pages), straight from F1 in this browser (direct.js).
 // Both deliver the same events to `es`.
 const es = new EventTarget();
-const emit = (type, detail) => es.dispatchEvent(new CustomEvent(type, {detail}));
+const emit = (type, detail) => {
+  const t0 = performance.now();
+  es.dispatchEvent(new CustomEvent(type, {detail}));
+  if(type === 'feed') window.pitwallLatency?.feed(detail, t0); // latency.js
+};
 let DIRECT = false;
 es.addEventListener('status', e=>{ feedStatus = e.detail.status; schedule(); });
 es.addEventListener('full', e=>{ state = e.detail; schedule(); loadCircuit(); });
@@ -980,10 +988,11 @@ function f1tvSetup(){
   location.reload();
 }
 </script>
-<script src="racesim.js?v=50"></script>
-<script src="engineer.js?v=50"></script>
-<script src="alerts.js?v=50"></script>
-<script src="kalshi-web.js?v=50"></script>
-<script src="rain.js?v=50"></script>
+<script src="latency.js?v=51"></script>
+<script src="racesim.js?v=51"></script>
+<script src="engineer.js?v=51"></script>
+<script src="alerts.js?v=51"></script>
+<script src="kalshi-web.js?v=51"></script>
+<script src="rain.js?v=51"></script>
 </body>
 </html>
