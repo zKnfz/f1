@@ -9,5 +9,5 @@ WorkingDirectory=/opt/pitwall
 EnvironmentFile=/etc/pitwall/pitwall.env
 ExecStart=/usr/local/bin/node tools/health.mjs
 TimeoutStartSec=90
+# It writes data/health.json and data/health.log itself; anything unexpected goes to the journal.
 StandardOutput=null
-StandardError=append:/opt/pitwall/data/health.log

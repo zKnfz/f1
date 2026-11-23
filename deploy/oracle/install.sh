@@ -36,6 +36,9 @@ if [ ! -d "$APP/.git" ]; then git clone -q "$REPO" "$APP"; fi
 chown -R pitwall:pitwall "$APP"
 sudo -u pitwall git -C "$APP" pull -q --ff-only || echo "(git pull failed; keeping the current code)"
 install -d -o pitwall -g pitwall -m 700 "$APP/data"
+# Log files belong to the recorder (systemd would otherwise create them as root, and the
+# recorder and logrotate could not write or rotate them).
+for f in relay session maintain health; do touch "$APP/data/$f.log"; chown pitwall:pitwall "$APP/data/$f.log"; chmod 640 "$APP/data/$f.log"; done
 
 echo "== headless browser (Playwright's Chromium; Google Chrome has no Linux ARM build)"
 cd "$APP"

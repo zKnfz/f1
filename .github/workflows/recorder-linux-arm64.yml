@@ -40,14 +40,16 @@ jobs:
           sudo kill -9 "$pid"; sleep 6
           new=$(systemctl show -p MainPID --value pitwall-relay.service)
           if [ "$new" != "$pid" ] && [ "$new" != 0 ] && curl -sf http://127.0.0.1:8765/api/health >/dev/null; then note crash "relay killed ($pid), systemd restarted it ($new), answering"; else note crash "NOT restarted"; exit 1; fi
-          note healthcheck "$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/health.mjs' 2>&1 | tail -1)"
+          note healthcheck "$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/health.mjs' 2>&1 | tail -3 | tr '\n' ' ')"
+          sudo systemctl start pitwall-health.service && note healthservice "$(systemctl show -p Result --value pitwall-health.service) $(sudo cat /opt/pitwall/data/health.json | tr -d '\n' | cut -c1-400)"
+          sudo logrotate -f /etc/logrotate.d/pitwall && note logrotate "rotated: $(sudo ls /opt/pitwall/data/ | grep -c '\.log\.1') files"
           sudo -u pitwall sudo -n systemctl start pitwall-maintain.service && note maintain "$(sudo cat /opt/pitwall/data/maintain.json | tr -d '\n')"
           sudo systemctl start pitwall-session.service; sleep 5
           note session "$(sudo tail -3 /opt/pitwall/data/session.log | tr '\n' ' ') state=$(systemctl is-active pitwall-session.service)"
       - name: What this network gets from F1 (expected to be refused on GitHub)
         continue-on-error: true
         run: |
-          out=$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/server-preflight.mjs' 2>&1); echo "$out"
+          out=$(sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/server-preflight.mjs' 2>&1 || true); echo "$out"
           echo "::notice title=preflight::$(echo "$out" | tr '\n' ' ')"
       - name: Logs
         if: always()
