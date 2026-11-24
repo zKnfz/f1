@@ -23,6 +23,11 @@ jobs:
         run: |
           npm install --no-save --no-package-lock playwright-core@1.65.1
           npx playwright-core install --with-deps chromium
+      - name: F1 network check from GitHub's network (evidence; expected to be refused)
+        continue-on-error: true
+        run: |
+          node tools/f1-net-preflight.mjs --json > net.json || true; cat net.json
+          echo "::notice title=f1net::$(python3 -c "import json; d=json.load(open('net.json')); print(d['verdict'], '|', ' ; '.join(f\"{c['name']}: {c.get('status')} by={c.get('answeredBy')} server={c.get('headers',{}).get('server')} xcache={c.get('headers',{}).get('x-cache')} body={c.get('body','')[:120]}\" for c in d['checks']))")"
       - name: Tests
         run: node --test tests/*.test.mjs
       - name: Recording self-test (record, crash, restart, replay, compress, browser)
