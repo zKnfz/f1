@@ -41,4 +41,4 @@ for (const [tr, te] of [['2025', '2024'], ['2024', '2025']]) {
   }
 }
 fs.writeFileSync(process.env.CAL_OUT || 'data/race-cal.json', JSON.stringify(fitAll(D)));
-console.log('wrote data/race-cal.json');
+console.log('wrote ' + (process.env.CAL_OUT || 'data/race-cal.json'));
