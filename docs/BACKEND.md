@@ -130,7 +130,7 @@ prediction can be traced back to its model, and the model to its training data.
 
 These are real processes: a stand-in F1 feed, the collector relay, the shipper, a TCP link the
 test can cut, ingest, the FOLLOW relay and headless Chromium. Results: 45/45 checks on macOS
-arm64. On GitHub's Linux ARM64 it runs with rclone; see the run's "pipeline" note.
+arm64 (rclone not installed); **46/46 on GitHub's Linux ARM64** with rclone (run 45297191887).
 
 | # | Scenario | Result |
 |---|---|---|
@@ -140,7 +140,7 @@ arm64. On GitHub's Linux ARM64 it runs with rclone; see the run's "pipeline" not
 | 4 | Network cut 8 s | Shipper notices and keeps the data on disk; backlog delivered, identical |
 | 5 | Duplicates | Exact repeat acknowledged, not written; overlap writes only the new part |
 | 6 | Out of order / bad requests | Gap → 409 with the needed offset; wrong secret, 10-min-old request, `../`, unknown file, partial line, bad feed line, 17 MB body → all refused |
-| 7 | Buffer exhaustion | 34 MB spooled during an outage, delivered in 3 s, shipper ~68 MB memory; backend "disk full" → 507, collector keeps everything, delivered after |
+| 7 | Buffer exhaustion | 34 MB spooled during an outage, delivered in 3 s (Mac) / 11 s (Linux ARM64), shipper 68–89 MB memory; backend "disk full" → 507, collector keeps everything, delivered after |
 | 8 | Compression | Backend copy gzipped, same state; late data appended after the .gz with offsets kept |
 | 9 | Replay | Page state on the backend = replayed state; state from the backend copy = from the collector copy |
 | 10 | Prediction consistency | Race model in the backend's headless page matches the golden reference (≤2.2e-16) |

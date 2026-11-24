@@ -77,7 +77,8 @@ async function converge(ms = 30000) {
 const safeConverge = async ms => { try { return await converge(ms); } catch { await sleep(500); return converge(ms); } };
 async function sameContent(label, n) {
   const d = sessionDir();
-  const a = await linesOf(path.join(COL, 'rec', d)), b = await linesOf(path.join(ORA, 'rec', d));
+  // Backend first: the collector only grows, so read later it can only be longer.
+  const b = await linesOf(path.join(ORA, 'rec', d)), a = await linesOf(path.join(COL, 'rec', d));
   // While F1 is still sending, the collector may be a few lines ahead: the backend copy must be
   // exactly the collector's first lines (nothing missing, nothing extra, same order).
   const prefix = b.length > 0 && b.length <= a.length && b.every((l, i) => l === a[i]);
