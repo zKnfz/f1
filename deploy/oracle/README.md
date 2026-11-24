@@ -1,3 +1,7 @@
+> **Oracle is refused by F1 (403 at F1's CDN).** Use the backend + collector setup in
+> [deploy/README.md](../README.md) and [docs/BACKEND.md](../../docs/BACKEND.md). This page still
+> applies to the parts both share (install, data layout, health, backups).
+
 # Running the recorder on an Oracle Cloud server
 
 The recorder records every F1 session without your Mac or browser being on. It is prepared here
@@ -40,7 +44,8 @@ If F1 refuses Oracle, stop there and delete the instance; the Mac recorder carri
 ssh ubuntu@<server address>
 curl -fsSLO https://raw.githubusercontent.com/zKnfz/f1/main/deploy/oracle/install.sh
 less install.sh            # read it first
-sudo bash install.sh
+sudo PITWALL_ROLE=standalone bash install.sh   # or backend / collector: see deploy/README.md
+# Nothing is enabled or started; it prints the systemctl line to run when you approve.
 ```
 
 It installs Node 22 (checked against nodejs.org's checksums), Playwright's Chromium, the

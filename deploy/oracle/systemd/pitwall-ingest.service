@@ -1,0 +1,31 @@
+# Backend only: receives recordings from collectors (see ingest.mjs). Listens on localhost or a
+# Tailscale address, never publicly; every request must be signed with the shared secret.
+[Unit]
+Description=Pitwall ingest (recordings from collectors)
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target tailscaled.service
+
+[Service]
+Type=simple
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/usr/local/bin/node ingest.mjs
+# Also covers a Tailscale address not being up yet at boot: it simply tries again.
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+MemoryMax=600M
+StandardOutput=append:/opt/pitwall/data/ingest.log
+StandardError=append:/opt/pitwall/data/ingest.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pitwall/data
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target

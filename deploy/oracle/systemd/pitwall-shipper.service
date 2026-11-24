@@ -1,0 +1,29 @@
+# Collector only: sends this machine's recordings to the backend (see shipper.mjs). Reads the
+# recording files, never changes them; resumes exactly after any restart on either side.
+[Unit]
+Description=Pitwall shipper (recordings to the backend)
+Wants=network-online.target
+After=network-online.target pitwall-relay.service tailscaled.service
+
+[Service]
+Type=simple
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+ExecStart=/usr/local/bin/node shipper.mjs
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+MemoryMax=400M
+StandardOutput=append:/opt/pitwall/data/shipper.log
+StandardError=append:/opt/pitwall/data/shipper.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pitwall/data
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -37,8 +37,15 @@ jobs:
           sudo apt-get install -y -q rclone >/dev/null
           node tools/selftest-pipeline.mjs | tee pipeline.txt
           echo "::notice title=pipeline::$(grep -cE '^ok' pipeline.txt) ok, $(grep -cE '^FAIL' pipeline.txt) failed; $(grep -E '\[(7|14)\]' pipeline.txt | tr '\n' ' ' | cut -c1-600)"
-      - name: Rehearse the server install (systemd)
-        run: sudo bash deploy/oracle/install.sh
+      - name: Install without approval enables nothing
+        run: |
+          sudo PITWALL_ROLE=standalone bash deploy/oracle/install.sh
+          st=$(systemctl is-enabled pitwall-relay.service pitwall-session.timer pitwall-health.timer pitwall-maintain.timer pitwall-ingest.service 2>&1 | tr '\n' ' ')
+          echo "::notice title=noenable::$st"
+          ! echo "$st" | grep -qw enabled
+          ! systemctl is-active --quiet pitwall-relay.service
+      - name: Rehearse the server install (systemd), services approved
+        run: sudo PITWALL_ROLE=standalone ENABLE_SERVICES=1 bash deploy/oracle/install.sh
       - name: Services running, crash recovery, health and maintenance
         run: |
           note() { echo "::notice title=$1::$2"; }
@@ -56,6 +63,18 @@ jobs:
           sudo -u pitwall sudo -n systemctl start pitwall-maintain.service && note maintain "$(sudo cat /opt/pitwall/data/maintain.json | tr -d '\n')"
           sudo systemctl start pitwall-session.service; sleep 5
           note session "$(sudo tail -3 /opt/pitwall/data/session.log | tr '\n' ' ') state=$(systemctl is-active pitwall-session.service)"
+      - name: Backend ingest under systemd (signed requests only, restart after kill -9)
+        run: |
+          note() { echo "::notice title=$1::$2"; }
+          sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/pitwall/ingest-secret'; sudo chown root:pitwall /etc/pitwall/ingest-secret; sudo chmod 640 /etc/pitwall/ingest-secret
+          sudo systemctl start pitwall-ingest.service; sleep 3
+          curl -sf http://127.0.0.1:8770/healthz >/dev/null || { sudo tail -20 /opt/pitwall/data/ingest.log; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST 'http://127.0.0.1:8770/v1/append?dir=2026-x-y-1&file=feed.tsv&offset=0' --data-binary 'x')
+          [ "$code" = 401 ] || { echo "unsigned request got $code"; exit 1; }
+          pid=$(systemctl show -p MainPID --value pitwall-ingest.service); sudo kill -9 "$pid"; sleep 5
+          new=$(systemctl show -p MainPID --value pitwall-ingest.service)
+          curl -sf http://127.0.0.1:8770/healthz >/dev/null && [ "$new" != "$pid" ] && note ingest "listening on 127.0.0.1 only ($(ss -ltn | grep -c ':8770 ')), unsigned → 401, restarted after kill -9" || { note ingest "NOT restarted"; exit 1; }
+          ss -ltn | grep ':8770 ' | grep -v '127.0.0.1' && { echo "ingest listening publicly"; exit 1; } || true
       - name: What this network gets from F1 (expected to be refused on GitHub)
         continue-on-error: true
         run: |
