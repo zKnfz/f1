@@ -183,3 +183,30 @@ test('transport: signed requests verify; any change, wrong secret or old time is
   assert.ok(DIR_RE.test('2026-qatar-grand-prix-qualifying-11423') && DIR_RE.test('_unsessioned/2026-11-27'));
   for (const bad of ['../etc', '2026-x/../../y', '/abs', '', '2026-qatar-grand-prix-qualifying-11423/x']) assert.ok(!DIR_RE.test(bad), bad);
 });
+
+// ---------- Training data: nothing from the future ----------
+test('dataset rows use only what was known at their cutoff (no look-ahead)', async () => {
+  const { lapRows } = await import('../tools/build-dataset.mjs');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-ds-'));
+  const rec = createRecorder({ dataDir: tmp, log: () => {} });
+  const info = { Key: 7, Name: 'Qualifying', Type: 'Qualifying', Meeting: { Name: 'Leak GP' }, StartDate: '2026-11-28T16:00:00' };
+  rec.frame(1, JSON.stringify({ type: 3, invocationId: '0', result: { SessionInfo: info, TimingData: { Lines: { '4': { NumberOfLaps: 2, Sectors: [{ Value: '' }, { Value: '' }, { Value: '' }] } } }, TimingStats: { Lines: { '4': { BestSectors: [{ Value: '30.000' }, { Value: '31.000' }, { Value: '32.000' }] } } } } }), 1000);
+  rec.open(info);
+  rec.frame(1, frameOf('TimingData', { Lines: { '4': { Sectors: { 0: { Value: '29.500' } } } } }, 'a'), 2000);           // S1
+  rec.frame(1, frameOf('TimingStats', { Lines: { '4': { BestSectors: { 0: { Value: '29.500' } } } } }, 'a'), 2001);
+  rec.frame(1, frameOf('TimingData', { Lines: { '4': { Sectors: { 1: { Value: '30.100' } } } } }, 'a'), 3000);           // S2
+  rec.frame(1, frameOf('TimingStats', { Lines: { '4': { BestSectors: { 1: { Value: '30.100' } } } } }, 'a'), 3001);
+  rec.frame(1, frameOf('TimingData', { Lines: { '4': { Sectors: { 2: { Value: '31.900' } }, LastLapTime: { Value: '1:31.500' }, NumberOfLaps: 3 } } }, 'a'), 4000);
+  rec.close('t'); await new Promise(r => setTimeout(r, 100));
+  const dir = path.join(tmp, 'rec', fs.readdirSync(path.join(tmp, 'rec'))[0]);
+  const rows = await lapRows(dir);
+  assert.equal(rows.length, 2);
+  const [s1, s2] = rows;
+  assert.equal(s1.after, 'S1'); assert.equal(s1.cutoff, 2000);
+  assert.deepEqual(s1.sectors, [29.5, null, null]);          // S2 had not happened
+  assert.deepEqual(s1.pbSectors, [30, 31, 32]);              // best S1 not yet updated at 2000 (it came at 2001)
+  assert.deepEqual(s2.sectors, [29.5, 30.1, null]);
+  assert.deepEqual(s2.pbSectors, [29.5, 31, 32]);            // knows the new best S1 (2001 < 3000), not S2's (3001)
+  assert.equal(s1.label.lapTime, 91.5); assert.equal(s1.label.knownAt, 4000);
+  assert.ok(rows.every(r => r.label.knownAt > r.cutoff));
+});
