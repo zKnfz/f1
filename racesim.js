@@ -33,12 +33,14 @@
     cal: 1,             // 1 = correct the chances with CAL (how often each figure came true before)
   };
 
-  // Correction learned from the 2024 and 2025 races (tools/race-calibrate.mjs), so a figure
-  // means how often such a figure came true. Before the start and during the race (fitted
-  // separately): logistic of [1, log-odds of the figure, log of the place: grid slot before the
-  // start, running position after]. A car further back wins less often than the same figure
-  // from the front.
-  const CAL = {"pre":{"win":[0.91,0.98,-1.081],"top3":[1.894,0.296,-1.847],"top5":[2.932,0.371,-1.912],"top10":[3.289,0.446,-1.472]},"race":{"win":[0.582,0.646,-1.325],"top3":[1.961,0.439,-1.657],"top5":[3.109,0.417,-1.872],"top10":[4.243,0.456,-1.827]}};
+  // Correction learned from past races (tools/race-calibrate.mjs), so a figure means how often
+  // such a figure came true. Before the start and during the race (fitted separately): logistic
+  // of [1, log-odds of the figure, log of the place: grid slot before the start, running
+  // position after]. A car further back wins less often than the same figure from the front.
+  // Fitted on 2024, 2025 and 2026 rounds 1–11 (Qatar left out), with safety-car laps dropped as
+  // the page drops them; on held-out 2026 rounds 12–21 it beat the previous correction in 8 of 10
+  // races (docs/QATAR-READINESS.md §4). Previous: models/candidates/race-cal-2026-11-23.json.
+  const CAL = {"pre":{"win":[1.132,1.098,-1.155],"top3":[1.737,0.465,-1.614],"top5":[2.312,0.586,-1.485],"top10":[2.493,0.481,-1.116]},"race":{"win":[0.491,1.062,-0.726],"top3":[1.108,0.699,-0.949],"top5":[1.314,0.703,-0.798],"top10":[1.858,0.709,-0.797]}};
   const lo = p => { p = Math.min(1 - 1e-4, Math.max(1e-4, p)); return Math.log(p / (1 - p)); };
   const calFix = (k, p, pos, started) => (w => 1 / (1 + Math.exp(-(w[0] + w[1] * lo(p) + w[2] * Math.log(Math.max(1, pos))))))(CAL[started ? 'race' : 'pre'][k]);
 
@@ -207,7 +209,7 @@
   }
 
   // Bump when the model changes, so recordings say which model made each prediction.
-  const VERSION = 'race-2026-11-23';
+  const VERSION = 'race-2026-11-24';
   const RaceSim = { VERSION, P, LIFE, CAL, build, run };
   root.RaceSim = RaceSim;
   if (typeof module !== 'undefined') module.exports = RaceSim;

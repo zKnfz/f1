@@ -52,7 +52,10 @@ for (const f of files) {
       const laps = [];
       for (let l = 2; l <= k; l++) {
         const x = lapT[id]?.[l];
-        if (!x || (pitsBy[id] || []).some(p => p === l || p === l - 1) || x.t > fieldMed[l] * 1.07) continue;
+        // The page drops laps under a safety car / VSC (it has track status); Jolpica has no track
+        // status, so a lap where the whole field ran 7%+ slow is treated the same way. Without this
+        // a car that pitted under a safety car kept only its fast laps and looked seconds quicker.
+        if (!x || (pitsBy[id] || []).some(p => p === l || p === l - 1) || x.t > fieldMed[l] * 1.07 || fieldMed[l] > ref * 1.07) continue;
         const ps = (pitsBy[id] || []).filter(p => p < l);
         laps.push({ time: x.t, age: l - (ps.length ? Math.max(...ps) : 0), stint: ps.length });
       }
@@ -63,6 +66,8 @@ for (const f of files) {
     const b = RaceSim.build({ lapsLeft: total - k, sprint: false, started: k > 0, pitLoss, scLoss: pitLoss * 0.55, ref, cars });
     const res = RaceSim.run(b, { runs: 2000 });
     const got = Object.fromEntries(res.cars.map(c => [c.n, c]));
+    // DBG=1: print the built state of the leaders and of any car the call rates far above its place.
+    if (process.env.DBG) for (const c of b.cars) { const r = got[c.n]; if (c.pos <= 3 || (r?.win > 0.15 && c.pos >= 8)) console.log(d.name, cp, JSON.stringify({ n: c.n, pos: c.pos, gap: +(c.gap ?? 0).toFixed(1), out: c.out, pace: +c.pace.toFixed(3), k: c.k, own: c.own && +c.own.toFixed(3), age: c.age, owed: c.owed, pExtra: c.pExtra && +c.pExtra.toFixed(2), win: r?.win && +r.win.toFixed(2), top3: r?.top3 && +r.top3.toFixed(2) })); }
     // PACE_DUMP: the model's other forecasts against what followed (only once the race has
     // laps): each car's pace against the field over the next 10 clean laps, the field's tyre
     // wear per lap, and pit stops still to make (tyres are assumed here: Jolpica has none).
