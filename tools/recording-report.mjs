@@ -43,8 +43,10 @@ for await (const f of readFeed(dir)) {
 const ev = readJsonl(dir, 'events.jsonl');
 const count = k => ev.filter(e => e.ev === k).length;
 const drift = ev.filter(e => e.ev === 'driftCheck');
-const page = readJsonl(dir, 'page.jsonl');
-const kal = readJsonl(dir, 'kalshi.jsonl').filter(k => k.type === 'kalshi');
+// A collector's page (page.jsonl) and/or the backend's (backend-page.jsonl); Kalshi likewise.
+const page = [...readJsonl(dir, 'page.jsonl'), ...readJsonl(dir, 'backend-page.jsonl')];
+const kal = [...readJsonl(dir, 'kalshi.jsonl'), ...readJsonl(dir, 'backend-kalshi.jsonl')].filter(k => k.type === 'kalshi').sort((a, b) => a.t - b.t);
+const ingest = readJsonl(dir, 'ingest.jsonl');
 const { state } = await stateAt(dir);
 
 console.log(`Recording ${path.relative(process.cwd(), dir)}`);
@@ -65,4 +67,5 @@ const kinds = {}; page.forEach(p => kinds[p.kind] = (kinds[p.kind] || 0) + 1);
 console.log(`  site records: ${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}`);
 const kg = kal.slice(1).map((k, i) => k.t - kal[i].t);
 console.log(`  Kalshi: ${kal.length} price changes${kal.length ? `, longest without a change ${fmtS(Math.max(0, ...kg))}` : ''}`);
+if (ingest.length) { const lag = ingest.map(i => i.at); console.log(`  backend copy: ${ingest.length} appends from ${[...new Set(ingest.map(i => i.collector))].join(', ')}, first ${new Date(Math.min(...lag)).toISOString()}, last ${new Date(Math.max(...lag)).toISOString()}`); }
 console.log(`  session: ${state.SessionInfo?.Meeting?.Name ?? '?'} ${state.SessionInfo?.Name ?? ''}, last status ${state.SessionStatus?.Status ?? '?'}`);

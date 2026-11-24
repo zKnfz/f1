@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.PITWALL_DATA || path.join(ROOT, 'data'));
 const REC = path.join(DATA, 'rec');
-const FILES = ['feed.tsv', 'events.jsonl', 'page.jsonl', 'kalshi.jsonl'];
+const FILES = ['feed.tsv', 'events.jsonl', 'page.jsonl', 'kalshi.jsonl', 'backend-events.jsonl', 'backend-page.jsonl', 'backend-kalshi.jsonl', 'ingest.jsonl'];
 const IDLE_MS = 2 * 3600e3, MIN_FREE = Number(process.env.MIN_FREE_PCT) || 15;
 const REMOTE = process.env.RCLONE_REMOTE || '';
 const log = (...a) => console.log(new Date().toISOString(), ...a);

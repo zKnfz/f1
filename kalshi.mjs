@@ -36,10 +36,10 @@ async function findEvent(series, info) {
   return ok.find(e => !/settled|finalized|closed/i.test(e.status || '')) || ok[0] || null;
 }
 
-export function startKalshi({ getState, broadcast, dataDir, recDir = () => null, enabled = true }) {
+export function startKalshi({ getState, broadcast, dataDir, recDir = () => null, recName = 'kalshi.jsonl', enabled = true }) {
   let setupAt = 0, sessionKey = null, events = {}, prices = {}, file = null, lastSite = 0, timer = null, slowUntil = 0;
   // Into the session's recording folder when there is one (recorder.mjs), else data/.
-  const write = rec => { const f = recDir() ? path.join(recDir(), 'kalshi.jsonl') : file; return f && fs.appendFile(f, JSON.stringify(rec) + '\n').catch(() => {}); };
+  const write = rec => { const f = recDir() ? path.join(recDir(), recName) : file; return f && fs.appendFile(f, JSON.stringify(rec) + '\n').catch(() => {}); };
 
   async function setup(info) {
     sessionKey = info.Key; setupAt = Date.now(); events = {}; prices = {};

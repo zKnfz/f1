@@ -4,17 +4,22 @@
 // Run: node server.mjs   then open http://127.0.0.1:8765
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { startKalshi } from './kalshi.mjs';
-import { createRecorder, readFeed, readJsonl } from './recorder.mjs';
+import { createRecorder, readFeed, readJsonl, dirNameFor } from './recorder.mjs';
 import os from 'node:os';
 
 // Replay: REPLAY=data/rec/<session folder> node server.mjs  plays a recording back to the page
 // exactly as it arrived (SPEED=4 for 4x, FROM=600 to start 600 s in). Nothing is recorded or
 // saved over real data while replaying.
 const REPLAY = process.env.REPLAY || '';
+// Backend (Oracle): FOLLOW=1 builds the live state from the recordings a collector sends in
+// (ingest.mjs writes them to data/rec/), instead of connecting to F1. Same frame handler, so
+// the page, predictions and alerts work exactly as with a direct connection.
+const FOLLOW = process.env.FOLLOW === '1';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8765;
@@ -201,7 +206,7 @@ setInterval(() => {
   if (OVER.test(state.SessionStatus?.Status || '')) overSince ??= now; else overSince = null;
   rec.setIdle(!!overSince && now - overSince > 30 * 60000);
   const stale = (overSince && now - overSince > 15 * 60000) || now - lastFrameAt > 10 * 60000;
-  if (!REPLAY && conns.length && stale && now - lastRefresh > 10 * 60000) {
+  if (!REPLAY && !FOLLOW && conns.length && stale && now - lastRefresh > 10 * 60000) {
     lastRefresh = now;
     console.log(new Date().toISOString(), 'feed: no session running, reconnecting to look for the next one');
     for (const c of conns) { c.live = false; c.retry = 0; try { c.ws?.close(); } catch {} }
@@ -220,7 +225,7 @@ function startFeeds() {
 // F1's archive needs a login, so the relay keeps its own record of every completed
 // lap from the moment it starts. It is saved to data/ so a restart keeps it.
 const DATA = REPLAY ? path.join(os.tmpdir(), 'pitwall-replay') : DATA_ROOT;
-const rec = createRecorder({ dataDir: DATA_ROOT, enabled: !REPLAY });
+const rec = createRecorder({ dataDir: DATA_ROOT, enabled: !REPLAY, backend: FOLLOW });
 let history = { key: null, laps: {}, pits: {} };
 const watch = {}; // per driver: last recorded lap time, pit seen this lap, pending timer
 let saveTimer = null;
@@ -322,7 +327,7 @@ async function circuit(key, year) {
   return circuits.get(id);
 }
 
-const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), enabled: !REPLAY && process.env.KALSHI !== '0' });
+const kalshi = startKalshi({ getState: () => state, broadcast, dataDir: DATA, recDir: () => rec.dir(), recName: FOLLOW ? 'backend-kalshi.jsonl' : 'kalshi.jsonl', enabled: !REPLAY && process.env.KALSHI !== '0' });
 
 // ---------- HTTP ----------
 const PAGES = { '/': 'index.html', '/index.html': 'index.html', '/sim': 'sim.html', '/sim.html': 'sim.html', '/engineer.js': 'engineer.js', '/direct.js': 'direct.js', '/rain.js': 'rain.js', '/racesim.js': 'racesim.js', '/alerts.js': 'alerts.js', '/kalshi-web.js': 'kalshi-web.js', '/racesim-worker.js': 'racesim-worker.js', '/latency.js': 'latency.js', '/pagelog.js': 'pagelog.js', '/lapstory.js': 'lapstory.js', '/models/registry.json': 'models/registry.json' };
@@ -355,6 +360,7 @@ http.createServer(async (req, res) => {
       ok: true, replay: !!REPLAY, feed: feedStatus, live: liveCount(), feeds: FEEDS,
       session: state.SessionInfo ? `${state.SessionInfo.Meeting?.Name} ${state.SessionInfo.Name}` : null, status: state.SessionStatus?.Status ?? null,
       lastDataAgoS: +((Date.now() - lastFrameAt) / 1000).toFixed(1), recording: rec.stats(), idle: rec.idle(),
+      follow: FOLLOW ? { dir: follow.dir, lines: follow.lines, lastLineAgoS: follow.lastAt ? +((Date.now() - follow.lastAt) / 1000).toFixed(1) : null, behindBytes: follow.behind } : undefined,
       uptimeS: Math.round(process.uptime()), rssMB: Math.round(process.memoryUsage().rss / 1e6), disk,
     }));
   }
@@ -387,9 +393,9 @@ http.createServer(async (req, res) => {
     }
   }
   // Shared learning files (see tools/record.mjs).
-  const lm = /^\/learned\/([\w.-]+\.json)$/.exec(url.pathname);
-  if (lm) {
-    try { const body = await fs.readFile(path.join(DIR, 'learned', lm[1])); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(body); }
+  const learnedM = /^\/learned\/([\w.-]+\.json)$/.exec(url.pathname);
+  if (learnedM) {
+    try { const body = await fs.readFile(path.join(DIR, 'learned', learnedM[1])); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(body); }
     catch { res.writeHead(404); return res.end('not found'); }
   }
   const file = PAGES[url.pathname];
@@ -398,7 +404,7 @@ http.createServer(async (req, res) => {
   res.end(await fs.readFile(path.join(DIR, file)));
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`Pitwall live timing on http://127.0.0.1:${PORT}  (simulator: /sim)`);
-  if (REPLAY) startReplay(); else startFeeds();
+  if (REPLAY) startReplay(); else if (FOLLOW) startFollow(); else startFeeds();
 });
 
 // A bug in one handler must not take the whole relay (and the recording) down.
@@ -418,7 +424,7 @@ async function startReplay() {
   setStatus('connecting');
   // Connection events (a connection dropping) are part of what the relay knew, so replay them too.
   const events = readJsonl(dir, 'events.jsonl').filter(e => e.ev === 'closed');
-  const kal = readJsonl(dir, 'kalshi.jsonl').filter(e => e.type === 'kalshi');
+  const kal = [...readJsonl(dir, 'kalshi.jsonl'), ...readJsonl(dir, 'backend-kalshi.jsonl')].filter(e => e.type === 'kalshi').sort((a, b) => a.t - b.t);
   const prices = {};
   const pseudo = {};
   const connOf = id => pseudo[id] ??= (conns.push({ id, retry: 0, live: false }), conns.at(-1));
@@ -437,4 +443,74 @@ async function startReplay() {
     n++;
   }
   console.log(`replay finished: ${n} frames`);
+}
+
+// ---------- Follow (backend) ----------
+// Tails data/rec/<session>/feed.tsv as ingest.mjs appends to it. On start, or when a new session
+// begins, it reads that session's file from the beginning (fast) to rebuild the state exactly,
+// then keeps up line by line. Connection drops recorded by the collector (events.jsonl) are
+// applied at their place in time, as in replay, so a collector reconnecting is handled the same.
+const follow = { dir: null, off: 0, evOff: 0, rest: '', evRest: '', lines: 0, lastAt: null, behind: 0, closes: [] };
+function startFollow() {
+  setStatus('connecting');
+  const pseudo = {};
+  const connOf = id => pseudo[id] ??= (conns.push({ id, retry: 0, live: false }), conns.at(-1));
+  const readNew = (file, from) => {
+    let fd; try { fd = fsSync.openSync(file, 'r'); } catch { return { text: '', to: from, size: 0 }; }
+    try {
+      const size = fsSync.fstatSync(fd).size;
+      if (size <= from) return { text: '', to: from, size };
+      const n = Math.min(size - from, 8 * 1024 * 1024), buf = Buffer.alloc(n);
+      fsSync.readSync(fd, buf, 0, n, from);
+      return { text: buf.toString('utf8'), to: from + n, size };
+    } finally { fsSync.closeSync(fd); }
+  };
+  async function switchTo(dir) {
+    console.log(new Date().toISOString(), `follow: session ${dir}`);
+    for (const c of conns) c.live = false;
+    for (const k in pseudo) delete pseudo[k];
+    conns.length = 0;
+    Object.assign(follow, { dir, off: 0, evOff: 0, rest: '', evRest: '', lines: 0, closes: [] });
+    // Older lines already compressed (feed.tsv.gz) come first.
+    const d = path.join(DATA_ROOT, 'rec', dir);
+    if (fsSync.existsSync(path.join(d, 'feed.tsv.gz'))) {
+      const closes = readJsonl(d, 'events.jsonl').filter(e => e.ev === 'closed');
+      let ci = 0;
+      for await (const f of readFeed(path.join(d, 'feed.tsv.gz'))) {
+        while (ci < closes.length && closes[ci].r <= f.r) { const pc = pseudo[closes[ci++].conn]; if (pc) pc.live = false; }
+        handleFrame(connOf(f.c), f.part, Date.now()); follow.lines++;
+      }
+    }
+  }
+  const tick = async () => {
+    try {
+      let latest = null;
+      try { latest = JSON.parse(fsSync.readFileSync(path.join(DATA_ROOT, 'ingest-latest.json'), 'utf8')).dir; } catch {}
+      if (latest && latest !== follow.dir && !latest.startsWith('_unsessioned')) await switchTo(latest);
+      if (follow.dir) {
+        const d = path.join(DATA_ROOT, 'rec', follow.dir);
+        const ev = readNew(path.join(d, 'events.jsonl'), follow.evOff);
+        if (ev.text) {
+          const parts = (follow.evRest + ev.text).split('\n'); follow.evRest = parts.pop(); follow.evOff = ev.to;
+          for (const l of parts) { try { const e = JSON.parse(l); if (e.ev === 'closed') follow.closes.push(e); } catch {} }
+        }
+        const r = readNew(path.join(d, 'feed.tsv'), follow.off);
+        follow.behind = Math.max(0, r.size - r.to);
+        if (r.text) {
+          const parts = (follow.rest + r.text).split('\n'); follow.rest = parts.pop(); follow.off = r.to;
+          for (const l of parts) {
+            const a = l.indexOf('\t'), b = l.indexOf('\t', a + 1), c = l.indexOf('\t', b + 1);
+            if (a < 0 || b < 0 || c < 0) continue;
+            const at = +l.slice(0, a), id = l.slice(b + 1, c);
+            while (follow.closes.length && follow.closes[0].r <= at) { const pc = pseudo[follow.closes.shift().conn]; if (pc) pc.live = false; }
+            handleFrame(connOf(id), l.slice(c + 1), Date.now());
+            follow.lines++; follow.lastAt = Date.now();
+          }
+          updateStatus();
+        }
+      }
+    } catch (e) { console.error(new Date().toISOString(), 'follow error:', e.stack || e.message); }
+    setTimeout(tick, follow.behind ? 0 : 100);
+  };
+  tick();
 }

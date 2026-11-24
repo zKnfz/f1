@@ -61,7 +61,9 @@ const page = await browser.newPage();
 }
 page.on('pageerror', e => log('page error:', e.message));
 const open = async () => {
-  await page.goto(`http://127.0.0.1:${PORT}/?mode=direct`, { waitUntil: 'domcontentloaded' });
+  // PAGE_URL: on the backend, the page reads the relay that follows the collector's data
+  // (http://127.0.0.1:8765/?mode=relay) instead of connecting to F1 itself.
+  await page.goto(process.env.PAGE_URL || `http://127.0.0.1:${PORT}/?mode=direct`, { waitUntil: 'domcontentloaded' });
   await sleep(8000); // connect to the feed and take the first snapshot
 };
 // What the page currently knows. `state`, `hist` and the learning stores are the page's own.

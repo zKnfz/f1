@@ -50,6 +50,9 @@
     push({ kind: 'pole', part: p.part, settled: p.settled, cars });
   });
   es.addEventListener('alert', e => push({ kind: 'alert', ...e.detail }));
+  // Model or page failures, recorded so a session's predictions can be trusted or not.
+  window.addEventListener('error', e => push({ kind: 'pageError', message: String(e.message || e.error || '').slice(0, 500), source: String(e.filename || '').split('/').pop(), line: e.lineno }));
+  window.addEventListener('unhandledrejection', e => push({ kind: 'pageError', message: String(e.reason?.message || e.reason || '').slice(0, 500) }));
   // The lap story (lapstory.js): each explained move, lap finished / aborted / deleted.
   es.addEventListener('lapstory', e => { const d = e.detail; push({ kind: 'story', version: window.lapStory?.VERSION, n: dInfo(d.n).code, what: d.kind, text: String(d.text).replace(/<[^>]+>/g, ''), from: d.from, to: d.to }); });
 })();
