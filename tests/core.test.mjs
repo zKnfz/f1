@@ -221,7 +221,9 @@ test('recorder: idle closes the session folder (so it can be backed up); resumin
   assert.equal(rec.stats(), null);   // /api/recording reports nothing active: compaction may proceed
   rec.frame(1, 'ignored', 2000);
   rec.setIdle(false);
-  assert.ok(rec.stats()); rec.frame(1, 'b', 3000); rec.close('t');
+  rec.frame(1, 'b', 3000);                 // straight away: held until the folder is reopened
+  await new Promise(r => setTimeout(r, 100));
+  assert.ok(rec.stats()); rec.close('t');
   await new Promise(r => setTimeout(r, 100));
   const dir = path.join(tmp, 'rec', fs.readdirSync(path.join(tmp, 'rec'))[0]);
   assert.deepEqual(fs.readFileSync(path.join(dir, 'feed.tsv'), 'utf8').trim().split('\n').map(l => l.split('\t')[3]), ['a', 'b']);

@@ -52,13 +52,17 @@ export function createRecorder({ dataDir, enabled = true, log = console.log, bac
     return s;
   }
   let lastInfo = null;
-  function open(info) {
+  // A folder being closed: reopening it waits until its files are fully written, so lines can
+  // never be written out of order (frames meanwhile are held, as before a session is known).
+  let closing = null; // { dir, done: Promise }
+  function open(info, after) {
     if (!enabled || !info?.Key) return;
     lastInfo = info;
     if (cur?.key === info.Key) return;
     close('session changed');
     idle = false; // a new session: record it
     const dir = path.join(root, dirNameFor(info));
+    if (closing?.dir === dir) { const c = closing; c.done.then(() => { if (!cur && lastInfo === info) { open(info); after?.(); } }); return; }
     fs.mkdirSync(dir, { recursive: true });
     cur = { key: info.Key, dir, feed: backend ? null : stream(path.join(dir, 'feed.tsv')), events: stream(path.join(dir, NAME.events)), page: stream(path.join(dir, NAME.page)), lines: 0, bytes: 0 };
     const metaFile = path.join(dir, NAME.meta);
@@ -89,7 +93,9 @@ export function createRecorder({ dataDir, enabled = true, log = console.log, bac
     if (!cur) return;
     event('close', { why, lines: cur.lines });
     const c = cur; cur = null;
-    for (const s of [c.feed, c.events, c.page]) s?.end();
+    const done = Promise.all([c.feed, c.events, c.page].filter(Boolean).map(s => new Promise(r => { s.once('close', r); s.once('error', r); s.end(); })));
+    const me = closing = { dir: c.dir, done };
+    done.then(() => { if (closing === me) closing = null; });
   }
   // A raw frame as received. Cheap: string concatenation only; no parsing or re-encoding.
   function frame(conn, part, receivedAt = Date.now()) {
@@ -120,7 +126,7 @@ export function createRecorder({ dataDir, enabled = true, log = console.log, bac
     setIdle(v) {
       if (v === idle) return;
       if (v) { event('idle', { why: 'session over for 30 min' }); close('idle'); idle = true; }
-      else { idle = false; if (!cur && lastInfo) open(lastInfo); event('resumed'); }
+      else { idle = false; if (!cur && lastInfo) open(lastInfo, () => event('resumed')); if (cur) event('resumed'); }
     },
     idle: () => idle,
     dir: () => cur?.dir || null,
