@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['server.mjs', 'recorder.mjs', 'kalshi.mjs', 'racesim.js', 'tools/**', 'tests/**', 'deploy/**', '.github/workflows/recorder-linux-arm64.yml']
+    paths: ['server.mjs', 'recorder.mjs', 'kalshi.mjs', 'racesim.js', 'ingest.mjs', 'shipper.mjs', 'transport.mjs', 'tools/**', 'tests/**', 'deploy/**', '.github/workflows/recorder-linux-arm64.yml']
 permissions:
   contents: read
 jobs:
@@ -32,6 +32,11 @@ jobs:
         run: node --test tests/*.test.mjs
       - name: Recording self-test (record, crash, restart, replay, compress, browser)
         run: node tools/selftest-recording.mjs
+      - name: Collector → backend pipeline self-test (14 failure scenarios, incl. rclone backup)
+        run: |
+          sudo apt-get install -y -q rclone >/dev/null
+          node tools/selftest-pipeline.mjs | tee pipeline.txt
+          echo "::notice title=pipeline::$(grep -cE '^ok' pipeline.txt) ok, $(grep -cE '^FAIL' pipeline.txt) failed; $(grep -E '\[(7|14)\]' pipeline.txt | tr '\n' ' ' | cut -c1-600)"
       - name: Rehearse the server install (systemd)
         run: sudo bash deploy/oracle/install.sh
       - name: Services running, crash recovery, health and maintenance

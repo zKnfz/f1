@@ -6,7 +6,6 @@
 //   5. replays it through the relay to a real headless page and compares the page's state
 //   6. checks the browser computes the reference race call bit for bit (tests/fixtures)
 //   node tools/selftest-recording.mjs [--no-browser]
-import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFeed, stateAt } from '../recorder.mjs';
 import { compactFolder } from './compact-recordings.mjs';
+import { startFakeF1 } from './lib/fake-f1.mjs';
 import { goldenInput, compare as goldenCompare, compute as goldenRows, FILE as GOLDEN } from '../tests/golden.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,52 +24,11 @@ let failed = 0;
 const ok = (cond, msg) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${msg}`); if (!cond) failed++; };
 
 // ---------- A fake F1 feed ----------
-let seq = 0;
+const fakeF1 = await startFakeF1();
+const fake = { address: () => ({ port: Number(fakeF1.origin.split(':').pop()) }), close: () => fakeF1.close() };
 const sockets = new Set();
-const SESSION = { Key: 99901, Name: 'Selftest', Type: 'Race', StartDate: '2026-01-01T12:00:00', Meeting: { Name: 'Selftest GP', Location: 'Nowhere' } };
-const drivers = ['1', '4', '16'];
-const snapshot = () => ({ SessionInfo: SESSION, SessionStatus: { Status: 'Started' }, LapCount: { CurrentLap: seq, TotalLaps: 1e6 },
-  DriverList: Object.fromEntries(drivers.map((n, i) => [n, { RacingNumber: n, Tla: ['VER', 'NOR', 'LEC'][i] }])),
-  TimingData: { Lines: Object.fromEntries(drivers.map((n, i) => [n, { Position: String(i + 1), NumberOfLaps: seq }])) } });
-function wsSend(sock, text) {
-  const p = Buffer.from(text), n = p.length;
-  const head = n < 126 ? Buffer.from([0x81, n]) : n < 65536 ? Buffer.from([0x81, 126, n >> 8, n & 255]) : (() => { const b = Buffer.alloc(10); b[0] = 0x81; b[1] = 127; b.writeBigUInt64BE(BigInt(n), 2); return b; })();
-  try { sock.write(Buffer.concat([head, p])); } catch {}
-}
-const fake = http.createServer((req, res) => {
-  if (req.url.startsWith('/signalrcore/negotiate')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ connectionToken: crypto.randomUUID(), negotiateVersion: 1 })); }
-  res.writeHead(404); res.end();
-});
-fake.on('upgrade', (req, sock) => {
-  const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
-  sock.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-  let buf = Buffer.alloc(0);
-  sock.on('data', d => {
-    buf = Buffer.concat([buf, d]);
-    while (buf.length >= 2) {
-      const op = buf[0] & 15; let len = buf[1] & 127, off = 2;
-      if (len === 126) { len = buf.readUInt16BE(2); off = 4; } else if (len === 127) { len = Number(buf.readBigUInt64BE(2)); off = 10; }
-      const masked = buf[1] & 128; if (buf.length < off + (masked ? 4 : 0) + len) break;
-      const mask = masked ? buf.subarray(off, off + 4) : null; off += masked ? 4 : 0;
-      const p = Buffer.from(buf.subarray(off, off + len)); if (mask) for (let i = 0; i < p.length; i++) p[i] ^= mask[i & 3];
-      buf = buf.subarray(off + len);
-      if (op === 8) { sockets.delete(sock); sock.end(); return; }
-      for (const m of p.toString().split(RS)) {
-        if (m.includes('"protocol"')) wsSend(sock, '{}' + RS);
-        if (m.includes('"Subscribe"')) { wsSend(sock, JSON.stringify({ type: 3, invocationId: '0', result: snapshot() }) + RS); sockets.add(sock); }
-      }
-    }
-  });
-  sock.on('close', () => sockets.delete(sock)); sock.on('error', () => sockets.delete(sock));
-});
-await new Promise(r => fake.listen(0, '127.0.0.1', r));
-const tick = setInterval(() => {
-  seq++;
-  const n = drivers[seq % 3];
-  const msg = JSON.stringify({ type: 1, target: 'feed', arguments: ['LapCount', { CurrentLap: seq }, new Date().toISOString()] }) + RS
-    + JSON.stringify({ type: 1, target: 'feed', arguments: ['TimingData', { Lines: { [n]: { NumberOfLaps: seq } } }, new Date().toISOString()] }) + RS;
-  for (const s of sockets) wsSend(s, msg);
-}, 50);
+let seq = 0; const seqNow = () => fakeF1.seq();
+const tick = null;
 
 // ---------- The real relay against it ----------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-selftest-'));
@@ -84,15 +43,14 @@ const h1 = await health(RPORT);
 ok(h1?.feed === 'live' && h1.live === 3, `relay live on 3 connections (${h1?.live})`);
 ok(!!h1?.recording?.dir, 'recording to ' + (h1?.recording?.dir ? path.relative(tmp, h1.recording.dir) : 'nothing'));
 const dir = h1.recording.dir;
-relay.kill('SIGKILL'); const killedAtSeq = seq; await new Promise(r => relay.on('exit', r));
+relay.kill('SIGKILL'); const killedAtSeq = seqNow(); await new Promise(r => relay.on('exit', r));
 await sleep(2000);
 relay = startRelay();
 await sleep(6000);
 const h2 = await health(RPORT);
 ok(h2?.recording?.dir === dir, 'after the crash it records into the same session folder');
 relay.kill('SIGTERM'); await new Promise(r => relay.on('exit', r));
-const lastSeq = seq;
-clearInterval(tick);
+fakeF1.stopUpdates();
 
 // Every update the fake sent while a relay was connected must be on disk.
 const got = new Set(); let frames = 0;

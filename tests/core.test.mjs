@@ -169,3 +169,17 @@ test('compressed recordings read back identically, including after more is appen
   const got = []; for await (const f of readFeed(dir)) got.push(f.r);
   assert.deepEqual(got, [1000, 2000, 2005, 3000, 9000]);
 });
+
+// ---------- Collector → backend transport ----------
+import { sign as tSign, verify as tVerify, DIR_RE } from '../transport.mjs';
+test('transport: signed requests verify; any change, wrong secret or old time is refused', () => {
+  const S = 'k'.repeat(64), body = Buffer.from('line\n'), now = Date.now();
+  const h = tSign(S, 'home-pi', 'POST', '/v1/append?dir=x&file=feed.tsv&offset=0', body, now);
+  assert.equal(tVerify(S, h, 'POST', '/v1/append?dir=x&file=feed.tsv&offset=0', body, now), 'home-pi');
+  assert.throws(() => tVerify(S, h, 'POST', '/v1/append?dir=x&file=feed.tsv&offset=5', body, now));   // offset changed
+  assert.throws(() => tVerify(S, h, 'POST', '/v1/append?dir=x&file=feed.tsv&offset=0', Buffer.from('other\n'), now));
+  assert.throws(() => tVerify('j'.repeat(64), h, 'POST', '/v1/append?dir=x&file=feed.tsv&offset=0', body, now));
+  assert.throws(() => tVerify(S, h, 'POST', '/v1/append?dir=x&file=feed.tsv&offset=0', body, now + 6 * 60000));
+  assert.ok(DIR_RE.test('2026-qatar-grand-prix-qualifying-11423') && DIR_RE.test('_unsessioned/2026-11-27'));
+  for (const bad of ['../etc', '2026-x/../../y', '/abs', '', '2026-qatar-grand-prix-qualifying-11423/x']) assert.ok(!DIR_RE.test(bad), bad);
+});
