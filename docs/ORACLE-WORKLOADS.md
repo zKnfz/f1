@@ -38,14 +38,18 @@ comparison, never during a race weekend. It also never writes into the repo's tr
 `tools/bench-workload.mjs` measures the same things on any machine and saves
 `data/bench/<host>-<arch>-<time>.json`.
 
-| | Mac (M1, 8 cores, 16 GB) | Oracle (2 OCPU Ampere, 12 GB) |
-|---|---|---|
-| Race call, one core | (BENCH-MAC) | run step 2 |
-| Race call, all cores | | |
-| One qualifying replay at 40× | | |
-| Relay health while replaying (p95) | | |
-| OpenF1 / Jolpica reachable | yes / yes | |
+| | Mac (M1, 8 cores, 16 GB) — **measured while overloaded** (load 11, 0.1 GB free, other replays running) | GitHub Linux ARM64 runner (4 cores) — **CI, a stand-in for the architecture, not your VM** | Oracle (2 OCPU Ampere, 12 GB) |
+|---|---|---|---|
+| Race call, one core (ms per call) | 65 | 30 | run step 3 |
+| Race calls per second, all cores | 55 (8 cores, ×3.2) | 129 (4 cores, ×3.8) | |
+| One qualifying replay at 40× | 88 s (2023 Qatar *sprint shootout*, 55 min) | 115 s (2023 Qatar *qualifying*, 74 min) | |
+| Relay health while replaying, p95 (idle p95) | **238 ms** (4 ms) | **1.7 ms** (3.1 ms), replay at nice 19 | |
+| Same race-call answer as the Mac | — | yes (identical) | |
+| OpenF1 / Jolpica / F1 live timing | 200 / 200 / 200 | 200 / 200 / **403** (refused; not needed) | |
 
+The Mac figures will be re-measured on the same session once tonight's evaluations finish; the
+interference row is the striking one either way: on a loaded Mac the live relay slowed to a quarter
+of a second, on the low-priority Linux setup it did not move.
 ## Steps (yours; I have no access to the VM)
 
 1. **Get the code there**: `sudo -u pitwall git -C /opt/pitwall pull --ff-only`, then
