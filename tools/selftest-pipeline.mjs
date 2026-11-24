@@ -239,6 +239,12 @@ try {
     execFileSync('rclone', ['copy', path.join(remote, d), path.join(restore, d)]);
     const sr = JSON.stringify((await stateAt(path.join(restore, d))).state);
     ok(14, sr === so, 'restored from the backup: state identical');
+    // The storage cap: a second remote, with a limit smaller than the folder, gets nothing.
+    const remote2 = path.join(tmp, 'backup2'); fs.mkdirSync(remote2);
+    fs.rmSync(path.join(ORA, 'rec', d, '.backed-up.json'));
+    try { execFileSync(process.execPath, ['tools/compact-recordings.mjs'], { cwd: ROOT, env: { ...process.env, PITWALL_DATA: ORA, RCLONE_REMOTE: remote2, BACKUP_MAX_GB: '0.0001', PORT: '1' } }); } catch {}
+    const m2 = JSON.parse(fs.readFileSync(path.join(ORA, 'maintain.json'), 'utf8'));
+    ok(14, !m2.backedUp.length && m2.errors.some(e => /backup limit/.test(e)) && fs.readdirSync(remote2).length === 0 && fs.existsSync(path.join(ORA, 'rec', d)), `backup cap: nothing uploaded past BACKUP_MAX_GB, local copy kept (${m2.errors[0]?.slice(0, 90)})`);
   }
 } catch (e) {
   ok('x', false, 'test crashed: ' + (e.stack || e.message));

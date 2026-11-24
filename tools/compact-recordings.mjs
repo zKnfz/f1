@@ -24,6 +24,11 @@ const REMOTE = process.env.RCLONE_REMOTE || '';
 // A collector never compresses or removes: the shipper reads its files by byte offset, and its
 // copy is the fallback until the backend's copy is backed up. It only reports space.
 const COLLECTOR = process.env.PITWALL_ROLE === 'collector';
+// Never let backups grow past this (GB) on the remote: Oracle Object Storage is free up to
+// 20 GB in total, so the default leaves room. A folder that would cross it is not uploaded
+// (it stays local and is reported), never anything deleted remotely to make room.
+const MAX_GB = Number(process.env.BACKUP_MAX_GB ?? 15);
+const dirBytes = d => fs.readdirSync(d, { recursive: true }).reduce((s, f) => { const st = fs.statSync(path.join(d, f)); return s + (st.isFile() ? st.size : 0); }, 0);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const lines = s => s ? s.split('\n').filter(Boolean).length : 0;
 
@@ -76,13 +81,26 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     try { const n = compactFolder(d); status.compressed.push(path.basename(d)); log('compressed', path.basename(d), n, 'lines'); }
     catch (e) { status.errors.push(e.message); log(e.message); }
   }
-  if (REMOTE) for (const d of dirs) {
+  let remoteBytes = null;
+  if (REMOTE) {
+    try { remoteBytes = JSON.parse(execFileSync('rclone', ['size', REMOTE, '--json'], { stdio: 'pipe', timeout: 600e3 }).toString()).bytes; }
+    catch (e) { status.errors.push(`backup: could not measure ${REMOTE}: ${String(e.stderr || e.message).slice(0, 200)}`); }
+    status.backupGB = remoteBytes == null ? null : +(remoteBytes / 1e9).toFixed(3);
+    status.backupMaxGB = MAX_GB;
+  }
+  if (REMOTE && remoteBytes != null) for (const d of dirs) {
     if (d === active || !fs.existsSync(d) || !compacted(d) || backedUp(d)) continue;
     const dest = `${REMOTE.replace(/\/$/, '')}/${path.basename(d)}`;
+    const size = dirBytes(d);
+    if ((remoteBytes + size) / 1e9 > MAX_GB) {
+      status.errors.push(`backup limit: ${path.basename(d)} (${(size / 1e6).toFixed(0)} MB) not uploaded; remote holds ${(remoteBytes / 1e9).toFixed(2)} GB of BACKUP_MAX_GB=${MAX_GB}`);
+      log('backup limit reached, not uploading', path.basename(d)); continue;
+    }
     try {
       execFileSync('rclone', ['copy', d, dest, '--exclude', '.backed-up.json'], { stdio: 'pipe', timeout: 3600e3 });
       execFileSync('rclone', ['check', d, dest, '--one-way', '--exclude', '.backed-up.json'], { stdio: 'pipe', timeout: 3600e3 });
       fs.writeFileSync(marker(d), JSON.stringify({ at: new Date().toISOString(), remote: dest, signature: signature(d) }));
+      remoteBytes += size;
       status.backedUp.push(path.basename(d)); log('backed up', path.basename(d), '→', dest);
     } catch (e) { status.errors.push(`backup ${path.basename(d)}: ${String(e.stderr || e.message).slice(0, 300)}`); log('backup failed', path.basename(d), String(e.stderr || e.message).slice(0, 300)); }
   }

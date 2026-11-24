@@ -210,3 +210,21 @@ test('dataset rows use only what was known at their cutoff (no look-ahead)', asy
   assert.equal(s1.label.lapTime, 91.5); assert.equal(s1.label.knownAt, 4000);
   assert.ok(rows.every(r => r.label.knownAt > r.cutoff));
 });
+
+test('recorder: idle closes the session folder (so it can be backed up); resuming reopens it', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-idle-'));
+  const rec = createRecorder({ dataDir: tmp, log: () => {} });
+  const info = { Key: 5, Name: 'Race', Meeting: { Name: 'Idle GP' }, StartDate: '2026-11-22T06:00:00' };
+  rec.open(info); rec.frame(1, 'a', 1000);
+  assert.ok(rec.stats());
+  rec.setIdle(true);
+  assert.equal(rec.stats(), null);   // /api/recording reports nothing active: compaction may proceed
+  rec.frame(1, 'ignored', 2000);
+  rec.setIdle(false);
+  assert.ok(rec.stats()); rec.frame(1, 'b', 3000); rec.close('t');
+  await new Promise(r => setTimeout(r, 100));
+  const dir = path.join(tmp, 'rec', fs.readdirSync(path.join(tmp, 'rec'))[0]);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'feed.tsv'), 'utf8').trim().split('\n').map(l => l.split('\t')[3]), ['a', 'b']);
+  const evs = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8');
+  assert.match(evs, /"idle"/); assert.match(evs, /"resumed"/);
+});

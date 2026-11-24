@@ -51,8 +51,10 @@ export function createRecorder({ dataDir, enabled = true, log = console.log, bac
     s.on('error', e => log('recorder: write failed', file, e.message));
     return s;
   }
+  let lastInfo = null;
   function open(info) {
     if (!enabled || !info?.Key) return;
+    lastInfo = info;
     if (cur?.key === info.Key) return;
     close('session changed');
     idle = false; // a new session: record it
@@ -113,7 +115,13 @@ export function createRecorder({ dataDir, enabled = true, log = console.log, bac
 
   return {
     enabled, backend, open, close, frame, event, page,
-    setIdle(v) { if (v !== idle) { if (v) event('idle', { why: 'session over for 30 min' }); idle = v; if (!v) event('resumed'); } },
+    // Idle (the session has been over for 30 min): close the files, so the folder counts as
+    // finished and maintenance can compress and back it up. Resuming reopens the same folder.
+    setIdle(v) {
+      if (v === idle) return;
+      if (v) { event('idle', { why: 'session over for 30 min' }); close('idle'); idle = true; }
+      else { idle = false; if (!cur && lastInfo) open(lastInfo); event('resumed'); }
+    },
     idle: () => idle,
     dir: () => cur?.dir || null,
     stats: () => cur ? { dir: cur.dir, lines: cur.lines, bytes: cur.bytes } : null,
