@@ -23,8 +23,18 @@ import zlib from 'node:zlib';
 
 const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 
-export function createRecorder({ dataDir, enabled = true, log = console.log }) {
+// The folder name for a session, the same on every machine (collector and backend agree on it).
+export function dirNameFor(info) {
+  const year = String(info.StartDate || '').slice(0, 4) || new Date().getUTCFullYear();
+  return `${year}-${slug(info.Meeting?.Name)}-${slug(info.Name)}-${info.Key}`;
+}
+// A collector writes feed.tsv, events.jsonl, meta.json (and page/kalshi if it runs them).
+// The backend (FOLLOW mode) receives those files from the collector, so it must never write
+// them itself: `backend: true` turns off the raw feed and writes its own records to
+// backend-events.jsonl, backend-page.jsonl and backend-meta.json in the same session folder.
+export function createRecorder({ dataDir, enabled = true, log = console.log, backend = false }) {
   const root = path.join(dataDir, 'rec');
+  const NAME = backend ? { events: 'backend-events.jsonl', page: 'backend-page.jsonl', meta: 'backend-meta.json' } : { events: 'events.jsonl', page: 'page.jsonl', meta: 'meta.json' };
   let cur = null; // { key, dir, feed, events, page, kalshiFile, lines, bytes }
   const pending = []; // frames that arrive before the session is known
   const startedAt = Date.now();
@@ -46,11 +56,10 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
     if (cur?.key === info.Key) return;
     close('session changed');
     idle = false; // a new session: record it
-    const year = String(info.StartDate || '').slice(0, 4) || new Date().getUTCFullYear();
-    const dir = path.join(root, `${year}-${slug(info.Meeting?.Name)}-${slug(info.Name)}-${info.Key}`);
+    const dir = path.join(root, dirNameFor(info));
     fs.mkdirSync(dir, { recursive: true });
-    cur = { key: info.Key, dir, feed: stream(path.join(dir, 'feed.tsv')), events: stream(path.join(dir, 'events.jsonl')), page: stream(path.join(dir, 'page.jsonl')), lines: 0, bytes: 0 };
-    const metaFile = path.join(dir, 'meta.json');
+    cur = { key: info.Key, dir, feed: backend ? null : stream(path.join(dir, 'feed.tsv')), events: stream(path.join(dir, NAME.events)), page: stream(path.join(dir, NAME.page)), lines: 0, bytes: 0 };
+    const metaFile = path.join(dir, NAME.meta);
     let meta = {};
     try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch {}
     meta.session = { key: info.Key, name: info.Name, type: info.Type, meeting: info.Meeting?.Name, location: info.Meeting?.Location, start: info.StartDate, end: info.EndDate, gmtOffset: info.GmtOffset };
@@ -59,19 +68,32 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
     fs.writeFileSync(metaFile, JSON.stringify(meta, null, 1));
     event('open', { session: `${info.Meeting?.Name} ${info.Name}`, relayStarted: new Date(startedAt).toISOString() });
     log(new Date().toISOString(), 'recording to', path.relative(dataDir, dir));
-    for (const p of pending.splice(0)) cur.feed.write(p);
+    if (cur.feed) for (const p of pending.splice(0)) cur.feed.write(p);
+    if (spill) { spill.end(); spill = null; }
+  }
+  // Frames that arrive before any session is known are held in memory; past 5000 they go to
+  // rec/_unsessioned/<date>/feed.tsv instead of being dropped.
+  let spill = null;
+  function spillLine(line) {
+    if (!spill) {
+      const d = path.join(root, '_unsessioned', new Date().toISOString().slice(0, 10));
+      fs.mkdirSync(d, { recursive: true });
+      spill = stream(path.join(d, 'feed.tsv'));
+      log(new Date().toISOString(), 'recorder: no session known yet, keeping frames in', path.relative(dataDir, d));
+    }
+    spill.write(line);
   }
   function close(why) {
     if (!cur) return;
     event('close', { why, lines: cur.lines });
     const c = cur; cur = null;
-    for (const s of [c.feed, c.events, c.page]) s.end();
+    for (const s of [c.feed, c.events, c.page]) s?.end();
   }
   // A raw frame as received. Cheap: string concatenation only; no parsing or re-encoding.
   function frame(conn, part, receivedAt = Date.now()) {
-    if (!enabled || idle) return;
+    if (!enabled || idle || backend) return;
     const line = `${receivedAt}\t${performance.now().toFixed(1)}\t${conn}\t${part}\n`;
-    if (!cur) { pending.push(line); if (pending.length > 5000) pending.shift(); return; }
+    if (!cur) { pending.push(line); if (pending.length > 5000) spillLine(pending.shift()); return; }
     cur.feed.write(line); cur.lines++; cur.bytes += line.length;
   }
   function event(ev, extra = {}) {
@@ -85,12 +107,12 @@ export function createRecorder({ dataDir, enabled = true, log = console.log }) {
   // Flush to disk regularly so a power cut or crash loses at most a few seconds.
   const sync = setInterval(() => {
     if (!cur) return;
-    for (const s of [cur.feed, cur.events, cur.page]) if (typeof s.fd === 'number') fs.fsync(s.fd, () => {});
+    for (const s of [cur.feed, cur.events, cur.page]) if (s && typeof s.fd === 'number') fs.fsync(s.fd, () => {});
   }, 5000);
   sync.unref?.();
 
   return {
-    enabled, open, close, frame, event, page,
+    enabled, backend, open, close, frame, event, page,
     setIdle(v) { if (v !== idle) { if (v) event('idle', { why: 'session over for 30 min' }); idle = v; if (!v) event('resumed'); } },
     idle: () => idle,
     dir: () => cur?.dir || null,
