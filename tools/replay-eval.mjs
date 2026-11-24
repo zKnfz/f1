@@ -9,6 +9,7 @@
 // Candidate models: run with CANDIDATE=<name> to load models/candidates/<name>.js into the page
 // before its own scripts run (see models/candidates/README.md).
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
@@ -35,7 +36,13 @@ async function one(dir, port) {
     env: { ...process.env, REPLAY: dir, SPEED: String(SPEED), REPLAY_WAIT: '1', REPLAY_OUT: out, PORT: String(port), KALSHI: '0', NO_LEARNED: '1', PITWALL_DATA: tmp, F1TV_TOKEN: '' } });
   let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
   const health = async () => { try { return await (await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) })).json(); } catch { return null; } };
-  for (let i = 0; i < 300 && !(await health()); i++) await sleep(200); // up to 60 s on a busy machine
+  // Wait for OUR relay (another process on this port would answer too): up to 60 s on a busy machine.
+  const ours = h => h?.replay?.dir === name;
+  for (let i = 0; i < 300 && !ours(await health()); i++) { if (srv.exitCode != null) break; await sleep(200); }
+  if (!ours(await health())) { srv.kill('SIGKILL'); fs.rmSync(tmp, { recursive: true, force: true }); throw new Error(`relay for ${name} not reachable on port ${port}: ${log.slice(-200)}`); }
+  // A session can't take longer than its feed at this speed, plus slack.
+  const feedS = (() => { try { const m = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); return m.durationS || 6000; } catch { return 6000; } })();
+  const limit = Date.now() + (feedS / SPEED * 3 + 300) * 1000;
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const errors = [];
@@ -44,10 +51,16 @@ async function one(dir, port) {
   const t0 = Date.now();
   try {
     await page.goto(`http://127.0.0.1:${port}/?mode=relay`, { waitUntil: 'load' });
-    for (;;) { const h = await health(); if (h?.replay?.done) break; if (srv.exitCode != null) throw new Error('relay exited: ' + log.slice(-300)); await sleep(1000); }
+    for (;;) {
+      const h = await health();
+      if (h?.replay?.done && ours(h)) break;
+      if (srv.exitCode != null) throw new Error('relay exited: ' + log.slice(-300));
+      if (Date.now() > limit) throw new Error('timed out');
+      await sleep(1000);
+    }
     await sleep(2500); // the page posts its records every 500 ms
   } finally {
-    await ctx.close(); srv.kill('SIGTERM'); fs.rmSync(tmp, { recursive: true, force: true });
+    await ctx.close().catch(() => {}); srv.kill('SIGKILL'); fs.rmSync(tmp, { recursive: true, force: true });
   }
   const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
   fs.writeFileSync(path.join(OUT, `${name}.meta.json`), JSON.stringify({ ...meta, eval: { speed: SPEED, candidate: CAND || null, wallS: (Date.now() - t0) / 1000, pageErrors: errors, at: new Date().toISOString() } }, null, 1));
@@ -55,6 +68,11 @@ async function one(dir, port) {
   return `${((Date.now() - t0) / 1000).toFixed(0)} s${errors.length ? `, ${errors.length} page errors` : ''}`;
 }
 
+// Refuse to start if any of our ports is already taken (a stale relay would answer for us).
+for (let j = 0; j < Math.min(JOBS, dirs.length); j++) {
+  const busy = await new Promise(r => { const t = net.createServer().once('error', () => r(true)).once('listening', () => t.close(() => r(false))).listen(PORT + j, '127.0.0.1'); });
+  if (busy) { console.error(`port ${PORT + j} is in use; stop whatever holds it or pass --port=`); await browser.close(); process.exit(1); }
+}
 let next = 0;
 await Promise.all(Array.from({ length: Math.min(JOBS, dirs.length) }, async (_, j) => {
   while (next < dirs.length) {

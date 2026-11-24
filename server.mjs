@@ -366,7 +366,7 @@ http.createServer(async (req, res) => {
     try { const s = await fs.statfs(DATA_ROOT); disk = { freeGB: +(s.bavail * s.bsize / 1e9).toFixed(2), freePct: +(100 * s.bavail / s.blocks).toFixed(1) }; } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({
-      ok: true, replay: REPLAY ? { at: replayAt, done: replayDone } : false, feed: feedStatus, live: liveCount(), feeds: FEEDS,
+      ok: true, replay: REPLAY ? { at: replayAt, done: replayDone, dir: path.basename(REPLAY) } : false, feed: feedStatus, live: liveCount(), feeds: FEEDS,
       session: state.SessionInfo ? `${state.SessionInfo.Meeting?.Name} ${state.SessionInfo.Name}` : null, status: state.SessionStatus?.Status ?? null,
       lastDataAgoS: +((Date.now() - lastFrameAt) / 1000).toFixed(1), recording: rec.stats(), idle: rec.idle(),
       follow: FOLLOW ? { dir: follow.dir, lines: follow.lines, lastLineAgoS: follow.lastAt ? +((Date.now() - follow.lastAt) / 1000).toFixed(1) : null, behindBytes: follow.behind } : undefined,
@@ -414,6 +414,11 @@ http.createServer(async (req, res) => {
   if (!file) { res.writeHead(404); return res.end('Not found'); }
   res.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'text/html; charset=utf-8' });
   res.end(await fs.readFile(path.join(DIR, file)));
+}).on('error', e => {
+  // Can't listen (port taken): exit so the service manager restarts it, instead of running on
+  // without serving anything (the uncaught-error handler below would otherwise keep it alive).
+  if (e.code === 'EADDRINUSE' || e.code === 'EACCES') { console.error(new Date().toISOString(), `cannot listen on port ${PORT}: ${e.code}`); process.exit(1); }
+  console.error(new Date().toISOString(), 'server error:', e.message);
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`Pitwall live timing on http://127.0.0.1:${PORT}  (simulator: /sim)`);
   if (REPLAY) startReplay(); else if (FOLLOW) startFollow(); else startFeeds();
