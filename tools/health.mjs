@@ -20,6 +20,10 @@ import { loadRaces, sessionsOf } from './schedule.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.PITWALL_DATA || path.join(ROOT, 'data'));
 const PORT = process.env.PORT || 8765;
+// PITWALL_ROLE=backend (Oracle): no F1 connection here; data comes from collectors through
+// ingest.mjs. Then the checks are about the collectors, ingestion and the relay following it.
+const BACKEND = process.env.PITWALL_ROLE === 'backend';
+const INGEST = process.env.INGEST_HEALTH_URL || `http://${process.env.INGEST_HOST || '127.0.0.1'}:${process.env.INGEST_PORT || 8770}/healthz`;
 const SYSTEMD = fs.existsSync('/run/systemd/system');
 const now = Date.now();
 const memFile = path.join(DATA, 'health-state.json');
@@ -48,6 +52,14 @@ if (!h) {
   mem.relayDown = (mem.relayDown || 0) + 1;
   if (mem.relayDown >= 2) restartRelay('not answering');
   else warnings.push('relay: not answering (will restart if it happens again)');
+} else if (BACKEND) {
+  mem.relayDown = 0;
+  // The relay must keep up with what arrives (it follows the session's feed.tsv).
+  if (running && h.follow && h.follow.lastLineAgoS != null && h.follow.lastLineAgoS > 30 && (h.follow.behindBytes || 0) > 0) restartRelay(`not keeping up with incoming data (${h.follow.behindBytes} bytes behind)`);
+  if (h.disk && h.disk.freePct < 15) {
+    warnings.push(`disk: ${h.disk.freePct}% free (${h.disk.freeGB} GB)`);
+    if (!active('pitwall-maintain.service')) systemctl('start', 'pitwall-maintain.service') && actions.push('started compaction for space');
+  }
 } else {
   mem.relayDown = 0;
   if (running && h.feed !== 'live') {
@@ -64,8 +76,41 @@ if (on && SYSTEMD && !active('pitwall-session.service') && !fs.readFileSync(path
   if (systemctl('start', 'pitwall-session.service')) actions.push(`started the recorder page for ${on.name}`);
   else warnings.push(`recorder page not running for ${on.name}`);
 }
-// F1 TV sign-in
-try {
+if (BACKEND) {
+  // Ingestion
+  let ing = null;
+  try { ing = await (await fetch(INGEST, { signal: AbortSignal.timeout(5000) })).json(); } catch {}
+  if (!ing) {
+    mem.ingestDown = (mem.ingestDown || 0) + 1;
+    if (mem.ingestDown >= 2) { actions.push('restarted ingest: not answering'); if (!systemctl('restart', 'pitwall-ingest.service')) warnings.push('ingest not answering, and could not restart it'); }
+    else warnings.push('ingest: not answering (will restart if it happens again)');
+  } else {
+    mem.ingestDown = 0;
+    const age = ing.lastAppendAt ? (now - Date.parse(ing.lastAppendAt)) / 1000 : Infinity;
+    if (running && age > 30) warnings.push(`no data arriving from any collector for ${isFinite(age) ? Math.round(age) + ' s' : 'this whole run'} during ${on.name}`);
+    if (ing.freeGB < 3) warnings.push(`ingest: only ${ing.freeGB} GB free; collectors are being asked to keep their data`);
+  }
+  // Collectors: what each says about itself (heartbeats every 15 s)
+  let hbs = [];
+  try { hbs = fs.readdirSync(path.join(DATA, 'collectors')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(DATA, 'collectors', f), 'utf8'))); } catch {}
+  if (!hbs.length) warnings.push('no collector has ever connected');
+  for (const c of hbs) {
+    const age = (now - c.receivedAt) / 1000, who = `collector ${c.collector}`;
+    if (on && age > 60) warnings.push(`${who} offline: last heard ${age < 3600 ? Math.round(age) + ' s' : (age / 3600).toFixed(1) + ' h'} ago, ${on.name} ${running ? 'running' : 'about to start'}`);
+    else if (!on && age > 6 * 3600) warnings.push(`${who} offline for ${(age / 3600).toFixed(1)} h`);
+    if (age < 120) {
+      if (running && c.relay && c.relay.feed !== 'live') warnings.push(`${who}: F1 feed ${c.relay.feed || 'down'} during the session`);
+      if (!c.relay) warnings.push(`${who}: its relay is not answering`);
+      if ((c.shipper?.backlogBytes || 0) > 5e6) warnings.push(`${who}: ${(c.shipper.backlogBytes / 1e6).toFixed(1)} MB waiting to be sent${c.shipper.lastError ? ` (${c.shipper.lastError})` : ''}`);
+      if (c.token?.state === 'missing') warnings.push(`${who}: no F1 TV sign-in, car positions and telemetry are not being collected (timing is)`);
+      else if (c.token?.state === 'expired') warnings.push(`${who}: F1 TV sign-in expired, telemetry not collected (timing is)`);
+      else if (c.token?.expiresAt && Date.parse(c.token.expiresAt) - now < 30 * 3600e3) warnings.push(`${who}: F1 TV sign-in runs out ${c.token.expiresAt}`);
+      if (Math.abs(c.shipper?.clockOffsetMs || 0) > 2000) warnings.push(`${who}: clock ${(c.shipper.clockOffsetMs / 1000).toFixed(1)} s off the backend's (check NTP on both)`);
+    }
+  }
+}
+// F1 TV sign-in (only where this machine connects to F1 itself)
+if (!BACKEND) try {
   let tok = fs.readFileSync(path.join(DATA, 'f1tv-token.txt'), 'utf8').trim();
   try { tok = JSON.parse(decodeURIComponent(tok))?.data?.subscriptionToken || tok; } catch {}
   const exp = JSON.parse(Buffer.from(tok.split('.')[1], 'base64url').toString()).exp * 1000;
