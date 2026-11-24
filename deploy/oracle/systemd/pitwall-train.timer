@@ -1,0 +1,12 @@
+[Unit]
+# Starts the training job every night at 02:00 UTC; the job itself checks the F1 calendar and
+# only works between race weekends (12 h margin either side), so race weeks are left alone.
+Description=Nightly training job between race weekends
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

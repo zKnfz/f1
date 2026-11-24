@@ -27,6 +27,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const channel = process.env.CHROME_CHANNEL ?? (process.platform === 'darwin' ? 'chrome' : '');
 const browser = await chromium.launch({ ...(channel ? { channel } : {}), headless: true });
 
+// Stopped (Ctrl-C, or the training job making way for a race weekend): take every relay we
+// started and the browser down with us, so nothing is left holding a port. An unfinished session
+// has no .done marker and is simply replayed again next time.
+const live = new Set();
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { for (const p of live) p.kill('SIGKILL'); await browser.close().catch(() => {}); process.exit(sig === 'SIGTERM' ? 143 : 130); });
 async function one(dir, port) {
   const name = path.basename(dir), out = path.join(OUT, `${name}.jsonl`);
   if (fs.existsSync(out) && fs.existsSync(path.join(OUT, `${name}.done`))) return 'cached';
@@ -34,6 +39,7 @@ async function one(dir, port) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-eval-'));
   const srv = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, REPLAY: dir, SPEED: String(SPEED), REPLAY_WAIT: '1', REPLAY_OUT: out, PORT: String(port), KALSHI: '0', NO_LEARNED: '1', PITWALL_DATA: tmp, F1TV_TOKEN: '' } });
+  live.add(srv); srv.on('exit', () => live.delete(srv));
   let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
   const health = async () => { try { return await (await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) })).json(); } catch { return null; } };
   // Wait for OUR relay (another process on this port would answer too): up to 60 s on a busy machine.

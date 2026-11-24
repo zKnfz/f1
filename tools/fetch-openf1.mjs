@@ -4,6 +4,7 @@
 // (OpenF1's free limit is 30 requests a minute), backs off on 429.
 //   node tools/fetch-openf1.mjs 2023 2024 2025 2026            qualifying-type sessions, then races
 //   node tools/fetch-openf1.mjs 2026 --kinds=quali              only qualifying / sprint qualifying
+//   node tools/fetch-openf1.mjs 2023 --kinds=quali --keys=9215  just these sessions
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(process.env.PITWALL_DATA || path.join(ROOT, 'data'), 'openf1');
 const years = process.argv.slice(2).filter(a => /^\d{4}$/.test(a)).map(Number);
+const keys = process.argv.find(a => a.startsWith('--keys='))?.slice(7).split(',');
 const kinds = (process.argv.find(a => a.startsWith('--kinds='))?.slice(8) || 'quali,race').split(',');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let last = 0;
@@ -37,7 +39,7 @@ const index = [];
 for (const year of years) {
   const sessions = (await get('sessions', { year })).filter(s => Date.parse(s.date_end) < now - 3 * 3600e3 && !s.is_cancelled);
   for (const kind of kinds) {
-    const pick = sessions.filter(s => kind === 'quali' ? s.session_type === 'Qualifying' : s.session_type === 'Race');
+    const pick = sessions.filter(s => kind === 'quali' ? s.session_type === 'Qualifying' : s.session_type === 'Race').filter(s => !keys || keys.includes(String(s.session_key)));
     for (const s of pick) {
       const dir = path.join(OUT, String(year), String(s.session_key));
       fs.mkdirSync(dir, { recursive: true });

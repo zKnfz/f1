@@ -1,0 +1,45 @@
+[Unit]
+# Offline training and historical replays (tools/train-job.mjs), only between race weekends.
+# NOT enabled by install.sh for any role: enable the timer yourself when you want it.
+# Production (relay, ingest, recorder page, maintenance) always comes first: this runs at the
+# lowest CPU and disk priority, on at most one core's worth of CPU, with a memory ceiling, and
+# stops itself (exit 75) when a race weekend gets near.
+Description=Pitwall training job (between race weekends, low priority)
+After=network-online.target pitwall-relay.service
+StartLimitIntervalSec=12h
+StartLimitBurst=4
+
+[Service]
+Type=simple
+User=pitwall
+Group=pitwall
+WorkingDirectory=/opt/pitwall
+EnvironmentFile=/etc/pitwall/pitwall.env
+Environment=SCHEDULE_CACHE=/opt/pitwall/data/schedule-cache.json
+Environment=TRAIN_JOBS=1
+ExecStart=/usr/bin/env node /opt/pitwall/tools/train-job.mjs
+# Lowest priority, and never more than one of the two cores.
+Nice=19
+CPUSchedulingPolicy=batch
+CPUWeight=10
+CPUQuota=100%
+IOSchedulingClass=idle
+IOWeight=10
+MemoryHigh=3G
+MemoryMax=4G
+OOMScoreAdjust=900
+# A failed run is retried later (finished work is kept); exit 75 = "not now", which is normal.
+Restart=on-failure
+RestartSec=20min
+RestartPreventExitStatus=75
+SuccessExitStatus=75
+TimeoutStopSec=60
+KillMode=control-group
+RuntimeMaxSec=20h
+StandardOutput=append:/opt/pitwall/data/train.log
+StandardError=append:/opt/pitwall/data/train.log
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

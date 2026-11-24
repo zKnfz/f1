@@ -75,6 +75,29 @@ jobs:
           new=$(systemctl show -p MainPID --value pitwall-ingest.service)
           curl -sf http://127.0.0.1:8770/healthz >/dev/null && [ "$new" != "$pid" ] && note ingest "listening on 127.0.0.1 only ($(ss -ltn | grep -c ':8770 ')), unsigned → 401, restarted after kill -9" || { note ingest "NOT restarted"; exit 1; }
           ss -ltn | grep ':8770 ' | grep -v '127.0.0.1' && { echo "ingest listening publicly"; exit 1; } || true
+      - name: Historical replay, benchmark and training job on Linux ARM64 (no F1 live timing needed)
+        run: |
+          note() { echo "::notice title=$1::$2"; }
+          # One historical session from OpenF1 (2023 Qatar qualifying), rebuilt and replayed through the real page.
+          node tools/fetch-openf1.mjs 2023 --kinds=quali --keys=9215 > /dev/null
+          node tools/openf1-to-recording.mjs data/openf1/2023/9215
+          sudo systemd-analyze verify /etc/systemd/system/pitwall-train.service /etc/systemd/system/pitwall-train.timer && note trainunits "verify ok; enabled: $(systemctl is-enabled pitwall-train.timer 2>&1)"
+          # Benchmark, with the relay installed above running (its response time is the interference measure).
+          nice -n 19 node tools/bench-workload.mjs --force --replay=data/replays/openf1-9215 | tee bench.txt
+          note bench "$(grep -E '^(race call|replay|interference|network)' bench.txt | tr '\n' ' ' | cut -c1-900)"
+          # The training job under systemd with the unit's own limits: killed mid-replay, restarted by systemd, finishes.
+          sudo cp -r data/openf1 data/replays /opt/pitwall/data/ && sudo chown -R pitwall:pitwall /opt/pitwall/data
+          sudo mkdir -p /etc/systemd/system/pitwall-train.service.d
+          printf '[Service]\nEnvironment=TRAIN_IGNORE_CALENDAR=1\nExecStart=\nExecStart=/usr/bin/env node /opt/pitwall/tools/train-job.mjs --only=build,replay,score\nRestartSec=5\n' | sudo tee /etc/systemd/system/pitwall-train.service.d/ci.conf > /dev/null
+          sudo systemctl daemon-reload && sudo systemctl start pitwall-train.service
+          for i in $(seq 1 60); do sudo grep -q 'step replay' /opt/pitwall/data/train/train.log 2>/dev/null && break; sleep 2; done; sleep 20
+          note trainlimits "$(systemctl show -p Nice,CPUSchedulingPolicy,CPUQuotaPerSecUSec,IOSchedulingClass,MemoryHigh,MemoryMax pitwall-train.service | tr '\n' ' ')"
+          pid=$(systemctl show -p MainPID --value pitwall-train.service); sudo kill -9 "$pid"
+          for i in $(seq 1 90); do sudo test -f /opt/pitwall/data/eval/base/openf1-9215.done && break; sleep 10; done
+          if sudo test -f /opt/pitwall/data/eval/base/openf1-9215.done && ! ss -ltn | grep -q ':189'; then note trainresume "killed mid-replay (pid $pid), systemd restarted it, replay finished, no relay left over: $(sudo tail -2 /opt/pitwall/data/train/train.log | tr '\n' ' ')"; else sudo tail -30 /opt/pitwall/data/train/train.log /opt/pitwall/data/train/replay.log; exit 1; fi
+          # Near a race weekend it refuses to start (exit 75, which the unit treats as normal).
+          set +e; sudo -u pitwall env SCHEDULE_CACHE=/opt/pitwall/data/schedule-cache.json TRAIN_MARGIN_H=100000 node /opt/pitwall/tools/train-job.mjs --only=score; c=$?; set -e
+          [ "$c" = 75 ] && note trainwindow "busy window → exit 75 (not started)" || { echo "expected 75, got $c"; exit 1; }
       - name: What this network gets from F1 (expected to be refused on GitHub)
         continue-on-error: true
         run: |
