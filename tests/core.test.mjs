@@ -228,3 +228,23 @@ test('recorder: idle closes the session folder (so it can be backed up); resumin
   const evs = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8');
   assert.match(evs, /"idle"/); assert.match(evs, /"resumed"/);
 });
+
+// ---------- Public model distribution ----------
+test('learned/ as committed passes the sharing checks', async () => {
+  const { validate } = await import('../tools/validate-learned.mjs');
+  assert.deepEqual(validate().problems, []);
+});
+test('sharing checks refuse private or broken files', async () => {
+  const { validate } = await import('../tools/validate-learned.mjs');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pitwall-learned-'));
+  const A = Array.from({ length: 6 }, (_, i) => Array.from({ length: 6 }, (_, j) => (i === j ? 10 : 0)));
+  fs.writeFileSync(path.join(d, 'index.json'), JSON.stringify({ files: {} }));
+  fs.writeFileSync(path.join(d, 'pitwall-model-v4-150-quali.json'), JSON.stringify({ key: 'pitwall-model-v4-150-quali', A, b: [0, 0, 0, 0, 0, 0], laps: 3 }));
+  assert.deepEqual(validate(d).problems, []);
+  fs.writeFileSync(path.join(d, 'pitwall-calib-v1.json'), JSON.stringify({ pts: [[0.5, 1]], note: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc' }));
+  fs.writeFileSync(path.join(d, 'pitwall-qpace-9.json'), JSON.stringify({ key: 'pitwall-qpace-9', best: { 1: 1e9 } }));
+  fs.writeFileSync(path.join(d, 'pitwall-model-v4-150-race.json'), JSON.stringify({ key: 'pitwall-model-v4-150-race', A, b: [5, 0, 0, 0, 0, 0], laps: 3 }));
+  fs.writeFileSync(path.join(d, 'stolen.json'), JSON.stringify({ 'Position.z': 'x' }));
+  const p = validate(d).problems.join('\n');
+  assert.match(p, /calib.*token/); assert.match(p, /qpace.*50–200/); assert.match(p, /150-race.*implausible/); assert.match(p, /stolen.*telemetry/);
+});

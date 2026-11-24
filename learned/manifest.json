@@ -1,0 +1,27 @@
+{
+ "validated": "2026-11-24T19:57:16.234Z",
+ "validator": "validate-learned-1",
+ "codeCommit": "f1caaacfc2fd791f7505d5097fb718e8a81416a6",
+ "files": {
+  "pitwall-calib-v1": {
+   "sha256": "caadbd0893f1a28cfe646f5cca79b06dde95016be2211c0976be3f3ef512aee2",
+   "bytes": 19583
+  },
+  "pitwall-model-v4-152-race": {
+   "sha256": "d7b110fe31b6da09d4cfccde9d0dea9dcc2321fb979778eb87852778ca94d5b0",
+   "bytes": 17500
+  },
+  "pitwall-qpace-1300": {
+   "sha256": "d3c1e842649ff28048bbc2fbde2959e92659588889bdcef6dd1d941ebe0d49e4",
+   "bytes": 407
+  },
+  "pitwall-race-v1": {
+   "sha256": "cc84eaff7c424ede0e409b6c84bde59999ee5fbfa92121abe4c3293da00eb77f",
+   "bytes": 3689
+  },
+  "pitwall-score-v1-1300": {
+   "sha256": "90519205bf8faa5b4308b59cf2b9825f6f22ab400e69a24246384f7e43a98892",
+   "bytes": 175399
+  }
+ }
+}

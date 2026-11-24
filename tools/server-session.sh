@@ -39,6 +39,8 @@ grep -q '"note": "session over"' "$PITWALL_DATA/last-run.json" 2>/dev/null && ec
 node tools/recording-report.mjs || true
 
 if [ "${SHARE_LEARNED:-0}" = "1" ]; then
+  # Nothing reaches the public site unless it passes the checks (kept here, not shared, if not).
+  if ! node tools/validate-learned.mjs; then echo "learned/ failed validation: NOT shared"; exit 0; fi
   git add learned
   if ! git diff --cached --quiet; then
     git -c user.name="pitwall recorder" -c user.email="recorder@localhost" commit -q -m "Recorder (server): $name" -- learned

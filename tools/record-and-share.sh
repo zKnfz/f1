@@ -67,6 +67,8 @@ grep -q '"note": "session over"' data/last-run.json 2>/dev/null && echo "$name" 
 # Check the raw recording: gaps, drops, missed updates, missing laps (into the log).
 node tools/recording-report.mjs >> data/recorder.log 2>&1 || echo "$(date) recording report failed" >> data/recorder.log
 
+# Nothing reaches the public site unless it passes the checks (kept here, not shared, if not).
+if ! node tools/validate-learned.mjs >> data/recorder.log 2>&1; then echo "$(date) learned/ failed validation: NOT shared (see data/recorder.log)"; exit 0; fi
 git add learned
 if git diff --cached --quiet; then echo "$(date) Nothing new to share."; exit 0; fi
 git commit -q -m "Recorder: $name" -- learned

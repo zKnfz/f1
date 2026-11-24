@@ -96,7 +96,7 @@ No Oracle security-list or iptables change is needed: Tailscale connects outward
    restrict,port-forwarding,permitopen="127.0.0.1:8770" ssh-ed25519 AAAA... collector
    ```
 2. On the collector (a key made only for this): `autossh -M 0 -N -o ServerAliveInterval=15
-   -o ExitOnForwardFailure=yes -L 8770:127.0.0.1:8770 pitwall-tunnel@64.181.218.253`
+   -o ExitOnForwardFailure=yes -L 8770:127.0.0.1:8770 pitwall-tunnel@<oracle-public-ip>`
    and `SHIP_URL=http://127.0.0.1:8770`.
 
 Uses the SSH port the VM already has open. Either way, the ingest port is never public, and
