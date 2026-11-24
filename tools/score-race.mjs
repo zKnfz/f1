@@ -36,3 +36,28 @@ for (const year of [...years, 'all']) {
 const f = x => x == null ? '' : x.toFixed(3);
 for (const [k, v] of Object.entries(out)) console.log(k.padEnd(22), `races ${v.races}`.padEnd(9), `brier ${f(v.model.brier)} ll ${f(v.model.logLoss)} ece ${f(v.model.ece)}`, v.naive ? `| naive brier ${f(v.naive.brier)} ll ${f(v.naive.logLoss)}` : '', v.favouriteWon != null ? `| fav won ${(v.favouriteWon * 100).toFixed(0)}%` : '');
 if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify(out, null, 1));
+
+// ---- pace, tyre wear, pit stops (PACE_DUMP from race-backtest) ----
+const paceFile = process.argv.find(a => a.startsWith('--pace='))?.slice(7);
+if (paceFile) {
+  const { pace, deg } = JSON.parse(fs.readFileSync(paceFile, 'utf8'));
+  const rank = a => { const s = a.map((v, i) => [v, i]).sort((x, y) => x[0] - y[0]); const r = []; s.forEach(([, i], k) => { r[i] = k; }); return r; };
+  const spearman = (a, b) => { const ra = rank(a), rb = rank(b), n = a.length, m = (n - 1) / 2; let num = 0, da = 0, db = 0; for (let i = 0; i < n; i++) { num += (ra[i] - m) * (rb[i] - m); da += (ra[i] - m) ** 2; db += (rb[i] - m) ** 2; } return num / Math.sqrt(da * db); };
+  const P = {};
+  for (const year of [...new Set(pace.map(r => r.year))].sort().concat('all')) for (const cp of [...new Set(pace.map(r => r.cp))].sort((a, b) => a - b)) {
+    const rs = pace.filter(r => (year === 'all' || r.year === year) && r.cp === cp);
+    const pv = rs.filter(r => r.realRel != null);
+    const races = [...new Set(rs.map(r => r.race + r.year))];
+    const sp = races.map(k => { const g = pv.filter(r => r.race + r.year === k); return g.length >= 8 ? spearman(g.map(r => r.predRel), g.map(r => r.realRel)) : null; }).filter(x => x != null);
+    const fin = rs.filter(r => r.finished);
+    const dg = deg.filter(r => (year === 'all' || r.year === year) && r.cp === cp && r.realDeg != null);
+    P[`${year} @${Math.round(cp * 100)}%`] = {
+      paceMAE: mean(pv.map(r => Math.abs(r.predRel - r.realRel))), paceRankCorr: sp.length ? mean(sp) : null,
+      stopsExact: mean(fin.map(r => (r.owed === r.stopsAfter ? 1 : 0))), stopsMAE: mean(fin.map(r => Math.abs(r.owed - r.stopsAfter))),
+      degMAE: dg.length ? mean(dg.map(r => Math.abs(r.predDeg - r.realDeg))) : null, degPredMean: dg.length ? mean(dg.map(r => r.predDeg)) : null, degRealMean: dg.length ? mean(dg.map(r => r.realDeg)) : null,
+    };
+  }
+  console.log('\npace (s/lap vs field, next 10 clean laps) · pit stops still to make (finishers) · tyre wear (s/lap per lap of age)');
+  for (const [k, v] of Object.entries(P)) console.log(k.padEnd(10), `pace MAE ${f(v.paceMAE)} rank corr ${f(v.paceRankCorr)} | stops exact ${(v.stopsExact * 100).toFixed(0)}% MAE ${f(v.stopsMAE)} | wear predicted ${f(v.degPredMean)} realised ${f(v.degRealMean)} MAE ${f(v.degMAE)}`);
+  if (jsonOut) fs.writeFileSync(jsonOut.replace(/\.json$/, '-pace.json'), JSON.stringify(P, null, 1));
+}

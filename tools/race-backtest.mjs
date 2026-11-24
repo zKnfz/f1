@@ -12,15 +12,20 @@ const RaceSim = createRequire(import.meta.url)(path.join(ROOT, 'racesim.js'));
 const setArg = process.argv.find(a => a.startsWith('--set='));
 if (setArg) for (const kv of setArg.slice(6).split(',')) { const [k, v] = kv.split('='); RaceSim.P[k] = +v; }
 const quiet = process.argv.includes('--quiet');
+// CAL_FILE: try a different calibration (candidate) in place of the one in racesim.js.
+if (process.env.CAL_FILE) { const c = JSON.parse(fs.readFileSync(process.env.CAL_FILE, 'utf8')); RaceSim.CAL.pre = c.pre; RaceSim.CAL.race = c.race; }
+// ROUNDS=2026:15-24 limits a season to some rounds (e.g. the held-out part of 2026).
+const ROUNDS = process.env.ROUNDS ? Object.fromEntries(process.env.ROUNDS.split(',').map(x => { const [y, r] = x.split(':'); const [a, b] = r.split('-').map(Number); return [y, [a, b ?? a]]; })) : null;
 const secs = t => { if (!t) return null; const p = String(t).split(':'); return p.length === 2 ? +p[0] * 60 + +p[1] : +p[0]; };
 const median = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) / 2)]; };
 const CPS = process.env.CPS ? process.env.CPS.split(",").map(Number) : [0, 0.25, 0.5, 0.75, 0.9];
 
 const dir = path.join(ROOT, 'data', 'races');
 const yearArg = process.argv.find(a => a.startsWith('--year='))?.slice(7);
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && (!yearArg || yearArg.split(',').some(y => f.startsWith(y + '-')))).sort();
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && (!yearArg || yearArg.split(',').some(y => f.startsWith(y + '-')))).filter(f => { const [y, r] = f.replace('.json', '').split('-'); return !ROUNDS?.[y] || (+r >= ROUNDS[y][0] && +r <= ROUNDS[y][1]); }).sort();
 const rows = []; // { cp, market, p, hit }
 const favs = {};
+const paceDump = [], degDump = [];
 const dump = [];
 for (const f of files) {
   const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
@@ -58,7 +63,28 @@ for (const f of files) {
     const b = RaceSim.build({ lapsLeft: total - k, sprint: false, started: k > 0, pitLoss, scLoss: pitLoss * 0.55, ref, cars });
     const res = RaceSim.run(b, { runs: 2000 });
     const got = Object.fromEntries(res.cars.map(c => [c.n, c]));
-    if (process.env.DUMP) dump.push({ year: f.slice(0, 4), race: d.name, cp, cars: Object.keys(finish).map(id => ({ p: got[id] ? { win: got[id].win, top3: got[id].top3, top5: got[id].top5, top10: got[id].top10 } : { win: 0, top3: 0, top5: 0, top10: 0 }, o: finish[id].order, g: got[id]?.pos ?? 25 })) });
+    // PACE_DUMP: the model's other forecasts against what followed (only once the race has
+    // laps): each car's pace against the field over the next 10 clean laps, the field's tyre
+    // wear per lap, and pit stops still to make (tyres are assumed here: Jolpica has none).
+    if (process.env.PACE_DUMP && k > 0) {
+      const alive = b.cars.filter(c => !c.out);
+      const predMed = median(alive.map(c => c.pace + b.deg * (c.age + 5)));
+      const pitOf = id => pitsBy[id] || [];
+      for (const c of alive) {
+        const rel = [];
+        for (let l = k + 1; l <= Math.min(total, k + 10); l++) { const x = lapT[c.n]?.[l]; if (x && fieldMed[l] && !pitOf(c.n).some(p => p === l || p === l - 1) && x.t < fieldMed[l] * 1.07) rel.push(x.t - fieldMed[l]); }
+        paceDump.push({ year: f.slice(0, 4), race: d.name, cp, n: c.n, predRel: c.pace + b.deg * (c.age + 5) - predMed, realRel: rel.length >= 5 ? median(rel) : null, owed: c.owed, stopsAfter: pitOf(c.n).filter(p => p > k).length, finished: finish[c.n]?.finished ?? false });
+      }
+      // Realised wear: slope of lap time on tyre age over the rest of the race, within stints.
+      let sxy = 0, sxx = 0;
+      for (const id of ids) {
+        const st = {};
+        for (let l = k + 1; l <= total; l++) { const x = lapT[id]?.[l]; if (!x || !fieldMed[l] || pitOf(id).some(p => p === l || p === l - 1) || x.t > fieldMed[l] * 1.07) continue; const s = pitOf(id).filter(p => p < l).length, age = l - Math.max(0, ...pitOf(id).filter(p => p < l)); (st[s] ??= []).push([age, x.t - fieldMed[l]]); }
+        for (const g of Object.values(st)) { if (g.length < 6) continue; const ma = g.reduce((a, x) => a + x[0], 0) / g.length, mt = g.reduce((a, x) => a + x[1], 0) / g.length; for (const [a, t] of g) { sxy += (a - ma) * (t - mt); sxx += (a - ma) ** 2; } }
+      }
+      degDump.push({ year: f.slice(0, 4), race: d.name, cp, predDeg: b.deg, realDeg: sxx > 200 ? sxy / sxx : null });
+    }
+    if (process.env.DUMP) dump.push({ year: f.slice(0, 4), round: +d.round, race: d.name, cp, cars: Object.keys(finish).map(id => ({ p: got[id] ? { win: got[id].win, top3: got[id].top3, top5: got[id].top5, top10: got[id].top10 } : { win: 0, top3: 0, top5: 0, top10: 0 }, o: finish[id].order, g: got[id]?.pos ?? 25 })) });
     for (const id of Object.keys(finish)) {
       const p = got[id] || { win: 0, top3: 0, top5: 0, top10: 0 }, o = finish[id].order;
       if (process.env.DBG && ((p.top10 > 0.9 && o > 10) || (p.top5 > 0.9 && o > 5) || (p.top10 < 0.1 && o <= 10))) { const c = b.cars.find(x => x.n === id); console.log(d.name.slice(0, 12), cp, id, "top5", p.top5.toFixed(2), "top10", p.top10.toFixed(2), "got P" + o, "status", d.results.find(r => r.Driver.driverId === id).status, "posNow", c?.pos, "gap", c?.gap?.toFixed(1), "owed", c?.owed, "pace", c?.pace?.toFixed(2)); }
@@ -84,3 +110,4 @@ for (const m of ['win', 'top3', 'top5', 'top10']) {
 const tot = ['win', 'top5', 'top10'].reduce((a, m) => a + ll(rows.filter(r => r.m === m)), 0);
 console.log('SCORE ' + JSON.stringify({ logloss: +tot.toFixed(4), races: files.length }));
 if (process.env.DUMP) fs.writeFileSync(process.env.DUMP, JSON.stringify(dump));
+if (process.env.PACE_DUMP) fs.writeFileSync(process.env.PACE_DUMP, JSON.stringify({ pace: paceDump, deg: degDump }));

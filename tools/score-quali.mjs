@@ -20,7 +20,7 @@ const PART_S = { false: [1080, 900, 720], true: [720, 600, 480] };
 const STAGES = [['start', 0.02], ['25%', 0.25], ['50%', 0.5], ['75%', 0.75], ['90%', 0.9], ['last call', null]];
 
 export function scoreSession(recs, meta) {
-  const out = { proj: [], pole: [] };
+  const out = { proj: [], pole: [], ko: [] };
   const o = meta.outcome;
   // ---- lap projection ----
   const byDrv = {};
@@ -57,6 +57,18 @@ export function scoreSession(recs, meta) {
       const code = Object.fromEntries((meta._codes || []).map(x => x));
       const ps = c.cars.map(([tla, ch]) => [tla, ch]);
       out.pole.push({ part, stage, ps, winner: code[winner] || winner, t: c.feedT });
+      // Knockout: who is out at the end of Q1/Q2 (classification beyond the cut), the running
+      // order at this moment (from the time each car held), and the candidate's chances if any.
+      if (part < 3 && o.noEntries?.[part]) {
+        const cut = o.noEntries[part], inv = Object.fromEntries(Object.entries(code).map(([n, t]) => [t, n]));
+        const cls = o.classification || [];
+        const alive = cls.filter(r => part === 1 || r.pos <= o.noEntries[1]).map(r => r.n);
+        const outSet = new Set(cls.filter(r => alive.includes(r.n) && r.pos > cut).map(r => r.n));
+        const held = c.cars.filter(x => x[2] != null).sort((a, b) => a[2] - b[2]).map(x => inv[x[0]] || x[0]);
+        const rank = Object.fromEntries(alive.map(n => [n, held.includes(n) ? held.indexOf(n) + 1 : alive.length]));
+        const ko = recs.filter(r => r.kind === 'ko' && r.part === part && r.feedT <= (f == null ? c.feedT : at)).at(-1);
+        out.ko.push({ part, stage, cut, alive, out: [...outSet], rank, ps: ko ? ko.cars : null });
+      }
     }
   }
   return out;
@@ -132,3 +144,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify({ sessions: sessions.map(s => s.key), metrics: R }, null, 1));
 }
 export { summarize };
+
+// Knockout chances: binary per car (out at the end of this part or not), against a naive
+// reference from other sessions: how often a car in running position r at this stage went out.
+export function koScores(rows, naiveFrom) {
+  const tbl = {};
+  for (const r of naiveFrom) for (const n of r.alive) { const k = `${r.part}|${r.stage}|${Math.min(r.rank[n], 22)}`; (tbl[k] ??= [0, 0])[0] += r.out.includes(n) ? 1 : 0; tbl[k][1]++; }
+  const naiveP = (r, n) => { const x = tbl[`${r.part}|${r.stage}|${Math.min(r.rank[n], 22)}`]; return x ? (x[0] + 0.5) / (x[1] + 1) : 0.3; };
+  const m = pairs => { const c = p => Math.min(1 - 1e-3, Math.max(1e-3, p)); return { n: pairs.length, brier: pairs.reduce((a, [p, y]) => a + (p - y) ** 2, 0) / pairs.length, logLoss: pairs.reduce((a, [p, y]) => a - Math.log(y ? c(p) : 1 - c(p)), 0) / pairs.length, ece: ece(pairs) }; };
+  const withC = rows.filter(r => r.ps);
+  const cand = withC.flatMap(r => r.ps.map(([n, p]) => [p, r.out.includes(n) ? 1 : 0]));
+  const naive = withC.flatMap(r => r.ps.map(([n]) => [naiveP(r, n), r.out.includes(n) ? 1 : 0]));
+  return { candidate: cand.length ? m(cand) : null, naive: naive.length ? m(naive) : null };
+}

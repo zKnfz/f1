@@ -40,5 +40,5 @@ for (const [tr, te] of [['2025', '2024'], ['2024', '2025']]) {
     console.log(`${te} ${m.padEnd(5)} log loss ${ll(a).toFixed(4)} → ${ll(b).toFixed(4)}   before ${bands(a)}   after ${bands(b)}`);
   }
 }
-fs.writeFileSync('data/race-cal.json', JSON.stringify(fitAll(D)));
+fs.writeFileSync(process.env.CAL_OUT || 'data/race-cal.json', JSON.stringify(fitAll(D)));
 console.log('wrote data/race-cal.json');

@@ -35,7 +35,7 @@ async function one(dir, port) {
     env: { ...process.env, REPLAY: dir, SPEED: String(SPEED), REPLAY_WAIT: '1', REPLAY_OUT: out, PORT: String(port), KALSHI: '0', NO_LEARNED: '1', PITWALL_DATA: tmp, F1TV_TOKEN: '' } });
   let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
   const health = async () => { try { return await (await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) })).json(); } catch { return null; } };
-  for (let i = 0; i < 50 && !(await health()); i++) await sleep(200);
+  for (let i = 0; i < 300 && !(await health()); i++) await sleep(200); // up to 60 s on a busy machine
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const errors = [];
@@ -59,8 +59,10 @@ let next = 0;
 await Promise.all(Array.from({ length: Math.min(JOBS, dirs.length) }, async (_, j) => {
   while (next < dirs.length) {
     const d = dirs[next++];
-    try { console.log(new Date().toISOString(), path.basename(d), await one(d, 18900 + j)); }
-    catch (e) { console.log(new Date().toISOString(), path.basename(d), 'FAILED', e.message); }
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try { const r = await one(d, 18900 + j); console.log(new Date().toISOString(), path.basename(d), r); break; }
+      catch (e) { console.log(new Date().toISOString(), path.basename(d), attempt === 1 ? 'failed, retrying:' : 'FAILED:', e.message.split('\n')[0]); }
+    }
   }
 }));
 await browser.close();
