@@ -216,8 +216,8 @@ Unit tests (`tests/core.test.mjs`) cover the signature (tampered offset, body, s
 - rclone against real Oracle Object Storage or R2.
 - Real session sizes, and so how many seasons fit in 20 GB. There are no full real recordings
   here yet.
-- The ingest systemd unit on the real VM. CI covers the code, but CI's install rehearsal
-  doesn't start the backend role.
+- The ingest systemd unit on the real VM. CI runs it under systemd on Ubuntu 24.04 ARM64
+  (localhost only, unsigned request refused, restart after kill -9), but not on your VM.
 
 **Honest limits:**
 - 24/7 needs an always-on collector at home (or another accepted network). With only the
