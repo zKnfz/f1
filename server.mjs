@@ -349,7 +349,16 @@ http.createServer(async (req, res) => {
   if (url.pathname === '/api/record' && req.method === 'POST') { // predictions, alerts, model versions from the recorder's page
     let body = '';
     req.on('data', ch => { body += ch; if (body.length > 2e6) req.destroy(); });
-    req.on('end', () => { try { for (const r of JSON.parse(body)) rec.page(r); } catch {} res.writeHead(204); res.end(); });
+    req.on('end', () => {
+      try {
+        const recs = JSON.parse(body);
+        // A replay being evaluated: keep the page's predictions with the session time they were
+        // made at (replayAt: the original time of the latest frame the page could have seen).
+        if (REPLAY_OUT) fsSync.appendFileSync(REPLAY_OUT, recs.map(r => JSON.stringify({ feedT: replayAt, ...r })).join('\n') + (recs.length ? '\n' : ''));
+        else for (const r of recs) rec.page(r);
+      } catch {}
+      res.writeHead(204); res.end();
+    });
     return;
   }
   if (url.pathname === '/api/health') { // for tools/health.mjs (server monitoring)
@@ -357,7 +366,7 @@ http.createServer(async (req, res) => {
     try { const s = await fs.statfs(DATA_ROOT); disk = { freeGB: +(s.bavail * s.bsize / 1e9).toFixed(2), freePct: +(100 * s.bavail / s.blocks).toFixed(1) }; } catch {}
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({
-      ok: true, replay: !!REPLAY, feed: feedStatus, live: liveCount(), feeds: FEEDS,
+      ok: true, replay: REPLAY ? { at: replayAt, done: replayDone } : false, feed: feedStatus, live: liveCount(), feeds: FEEDS,
       session: state.SessionInfo ? `${state.SessionInfo.Meeting?.Name} ${state.SessionInfo.Name}` : null, status: state.SessionStatus?.Status ?? null,
       lastDataAgoS: +((Date.now() - lastFrameAt) / 1000).toFixed(1), recording: rec.stats(), idle: rec.idle(),
       follow: FOLLOW ? { dir: follow.dir, lines: follow.lines, lastLineAgoS: follow.lastAt ? +((Date.now() - follow.lastAt) / 1000).toFixed(1) : null, behindBytes: follow.behind } : undefined,
@@ -394,6 +403,9 @@ http.createServer(async (req, res) => {
   }
   // Shared learning files (see tools/record.mjs).
   const learnedM = /^\/learned\/([\w.-]+\.json)$/.exec(url.pathname);
+  // NO_LEARNED=1 (historical evaluation): the page starts from the code's own starting values,
+  // so nothing learned from later sessions can leak into a replay of an earlier one.
+  if (learnedM && process.env.NO_LEARNED === '1') { res.writeHead(404); return res.end('not found'); }
   if (learnedM) {
     try { const body = await fs.readFile(path.join(DIR, 'learned', learnedM[1])); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(body); }
     catch { res.writeHead(404); return res.end('not found'); }
@@ -418,9 +430,15 @@ for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
 });
 
 // ---------- Replay ----------
+let replayAt = null, replayDone = false;
+// REPLAY_OUT=file: the page's records (pole calls, race calls, lap stories) go there with
+// their session time, for scoring a historical session (tools/replay-eval.mjs).
+// REPLAY_WAIT=1: start only once a page is connected, so it sees the session from the start.
+const REPLAY_OUT = process.env.REPLAY_OUT || '';
 async function startReplay() {
   const dir = path.resolve(REPLAY), speed = Number(process.env.SPEED) || 1, from = (Number(process.env.FROM) || 0) * 1000;
   console.log(`replaying ${dir} at ${speed}x${from ? `, from ${from / 1000} s in` : ''}`);
+  if (process.env.REPLAY_WAIT === '1') while (!clients.size) await new Promise(r => setTimeout(r, 100));
   setStatus('connecting');
   // Connection events (a connection dropping) are part of what the relay knew, so replay them too.
   const events = readJsonl(dir, 'events.jsonl').filter(e => e.ev === 'closed');
@@ -428,7 +446,7 @@ async function startReplay() {
   const prices = {};
   const pseudo = {};
   const connOf = id => pseudo[id] ??= (conns.push({ id, retry: 0, live: false }), conns.at(-1));
-  let t0 = null, wall0 = null, n = 0, ei = 0, ki = 0;
+  let t0 = null, wall0 = null, n = 0, ei = 0, ki = 0, lastClock = 0;
   for await (const { r, c, part } of readFeed(dir)) {
     t0 ??= r;
     const at = r - t0;
@@ -439,9 +457,12 @@ async function startReplay() {
     }
     while (ei < events.length && events[ei].r <= r) { const pc = pseudo[events[ei].conn]; if (pc) pc.live = false; ei++; }
     while (ki < kal.length && kal[ki].t <= r) { const k = kal[ki++]; Object.assign(prices[k.m] ??= {}, Object.fromEntries(Object.entries(k.p).map(([code, v]) => [code, Array.isArray(v) ? v : v.p]))); broadcast('kalshi', { at: Date.now(), prices, replay: true }); }
+    // The original time of this moment, so the page's session clock runs as it did then.
+    if (r - lastClock >= 1000) { lastClock = r; replayAt = r; broadcast('clock', { t: r, speed }); }
     handleFrame(connOf(c), part, Date.now());
     n++;
   }
+  replayDone = true;
   console.log(`replay finished: ${n} frames`);
 }
 

@@ -50,6 +50,22 @@
     push({ kind: 'pole', part: p.part, settled: p.settled, cars });
   });
   es.addEventListener('alert', e => push({ kind: 'alert', ...e.detail }));
+  // The lap projection at each sector end (what the screen showed then), and each lap's real
+  // time, so projection error can be measured by sector. Runs after the page's own handlers.
+  es.addEventListener('feed', e => {
+    const [topic, data] = e.detail;
+    if (topic !== 'TimingData' || !data?.Lines || typeof liveLap !== 'function') return;
+    for (const [n, u] of Object.entries(data.Lines)) {
+      if (u?.LastLapTime?.Value) push({ kind: 'lapEnd', n: dInfo(n).code, num: n, time: u.LastLapTime.Value, laps: u.NumberOfLaps ?? null });
+      const ends = Object.entries(u?.Sectors || {}).filter(([k, s]) => (k === '0' || k === '1') && s?.Value).map(([k]) => +k);
+      if (ends.length) setTimeout(() => {
+        try {
+          const lv = liveLap(n);
+          push({ kind: 'proj', n: dInfo(n).code, num: n, after: Math.max(...ends) + 1, done: lv?.done ?? null, proj: lv?.projected != null ? +lv.projected.toFixed(3) : null, slow: !!lv?.slow, sigma: lv?.projected != null ? +projSigma(lv).toFixed(3) : null });
+        } catch {}
+      }, 0);
+    }
+  });
   // Model or page failures, recorded so a session's predictions can be trusted or not.
   window.addEventListener('error', e => push({ kind: 'pageError', message: String(e.message || e.error || '').slice(0, 500), source: String(e.filename || '').split('/').pop(), line: e.lineno }));
   window.addEventListener('unhandledrejection', e => push({ kind: 'pageError', message: String(e.reason?.message || e.reason || '').slice(0, 500) }));

@@ -409,7 +409,7 @@ td.lsendcell{text-align:left;white-space:nowrap}
   Between sessions this shows the most recent session. Unofficial fan project, not affiliated with Formula 1. · <a href="sim.html">Simulator</a>
 </footer>
 
-<script src="direct.js?v=53"></script>
+<script src="direct.js?v=54"></script>
 <script>
 // ---------- Live state ----------
 let state = {}, feedStatus = 'connecting', relayUp = false, selected = null;
@@ -436,6 +436,12 @@ const emit = (type, detail) => {
   if(type === 'feed') window.pitwallLatency?.feed(detail, t0); // latency.js
 };
 let DIRECT = false;
+// The session's own time, for countdowns. Live: this computer's clock. In a replay the relay
+// sends the original time ('clock'), so the session clock (and everything that depends on the
+// time left) runs as it did then, at the replay's speed.
+let feedClock = null;
+const feedNow = () => feedClock ? feedClock.t + (Date.now() - feedClock.wall) * feedClock.speed : Date.now();
+es.addEventListener('clock', e=>{ feedClock = { t: e.detail.t, speed: e.detail.speed || 1, wall: Date.now() }; });
 es.addEventListener('status', e=>{ feedStatus = e.detail.status; schedule(); });
 es.addEventListener('full', e=>{ state = e.detail; schedule(); loadCircuit(); });
 // Car GPS positions and telemetry (needs an F1 TV sign-in). Kept apart from `state`: only the
@@ -513,7 +519,7 @@ es.addEventListener('full', ()=>{ engDirty = true; });
     const src = new EventSource('events');
     src.onopen = ()=>{ relayUp = true; schedule(); };
     src.onerror = ()=>{ relayUp = false; schedule(); };
-    for(const t of ['status','full','feed','history','lap','pit','kalshi']) src.addEventListener(t, e=>emit(t, JSON.parse(e.data)));
+    for(const t of ['status','full','feed','history','lap','pit','kalshi','clock']) src.addEventListener(t, e=>emit(t, JSON.parse(e.data)));
   } else {
     DIRECT = true; relayUp = true;
     startDirect(emit);
@@ -836,7 +842,7 @@ function renderClock(){
   const c = state.ExtrapolatedClock;
   if(!c){ $('clock').innerHTML=''; return; }
   let ms = parseHms(c.Remaining);
-  if(c.Extrapolating && c.Utc) ms -= Date.now() - Date.parse(c.Utc);
+  if(c.Extrapolating && c.Utc) ms -= feedNow() - Date.parse(c.Utc);
   $('clock').innerHTML = `<small>REMAINING</small>${hms(ms)}`;
 }
 
@@ -997,13 +1003,13 @@ function f1tvSetup(){
   location.reload();
 }
 </script>
-<script src="latency.js?v=53"></script>
-<script src="racesim.js?v=53"></script>
-<script src="engineer.js?v=53"></script>
-<script src="alerts.js?v=53"></script>
-<script src="lapstory.js?v=53"></script>
-<script src="kalshi-web.js?v=53"></script>
-<script src="pagelog.js?v=53"></script>
-<script src="rain.js?v=53"></script>
+<script src="latency.js?v=54"></script>
+<script src="racesim.js?v=54"></script>
+<script src="engineer.js?v=54"></script>
+<script src="alerts.js?v=54"></script>
+<script src="lapstory.js?v=54"></script>
+<script src="kalshi-web.js?v=54"></script>
+<script src="pagelog.js?v=54"></script>
+<script src="rain.js?v=54"></script>
 </body>
 </html>

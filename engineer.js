@@ -149,6 +149,15 @@ const SHARED_BASE = (() => {
   return `https://raw.githubusercontent.com/${h.split('.')[0]}/${location.pathname.split('/')[1]}/main/learned/`;
 })();
 let sharedIndex = null;
+// A shared file is used only if it is what it says and every number in it is a real number
+// (tools/validate-learned.mjs checks much more before anything is shared; this is the last guard).
+function sharedOk(key, d) {
+  if (!d || typeof d !== 'object' || (d.key != null && d.key !== key)) return false;
+  const finite = v => Array.isArray(v) ? v.every(finite) : v && typeof v === 'object' ? Object.values(v).every(finite) : typeof v !== 'number' || Number.isFinite(v);
+  if (!finite(d)) return false;
+  if (/^pitwall-model-/.test(key)) return Array.isArray(d.A) && d.A.length === 6 && d.A.every(r => Array.isArray(r) && r.length === 6) && Array.isArray(d.b) && d.b.length === 6;
+  return true;
+}
 const sharedTried = {};
 function sharedAdopt(key, localSize, apply) {
   if (sharedTried[key]) return;
@@ -156,7 +165,7 @@ function sharedAdopt(key, localSize, apply) {
   sharedIndex ??= fetch(SHARED_BASE + 'index.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
   sharedIndex.then(idx => {
     if (!(idx.files?.[key] > localSize())) return;
-    return fetch(`${SHARED_BASE}${key}.json`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (d) apply(d); });
+    return fetch(`${SHARED_BASE}${key}.json`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(d => { if (sharedOk(key, d)) apply(d); });
   }).catch(() => {});
 }
 
@@ -914,7 +923,7 @@ setInterval(() => {
   if (status === 'Started') {
     const c = state.ExtrapolatedClock;
     let left = c?.Remaining ? parseHms(c.Remaining) / 1000 : null;
-    if (left != null && c.Extrapolating && c.Utc) left -= (Date.now() - Date.parse(c.Utc)) / 1000;
+    if (left != null && c.Extrapolating && c.Utc) left -= (feedNow() - Date.parse(c.Utc)) / 1000;
     const anyTime = Object.values(L_()).some(L => lapSecs(arr(L.BestLapTimes)[part - 1]?.Value));
     // Only log a moment the page actually saw, never one it opened too late for.
     const cp = left == null ? null : left <= 3 ? 'flag' : left <= 120 && left > 90 ? '2min' : left <= 300 && left > 240 ? '5min' : !anyTime && left > 300 ? 'start' : null;
@@ -945,7 +954,7 @@ function poleCall() {
   const running = ['Started', 'Inactive'].includes(state.SessionStatus?.Status);
   const c = state.ExtrapolatedClock;
   let left = c ? parseHms(c.Remaining) : null;
-  if (left != null && c.Extrapolating && c.Utc) left -= Date.now() - Date.parse(c.Utc);
+  if (left != null && c.Extrapolating && c.Utc) left -= feedNow() - Date.parse(c.Utc);
   const leftS = left == null ? null : left / 1000;
   const cars = [];
   let anyLive = false, anyGuess = false;
@@ -1028,7 +1037,7 @@ function sessionLeftMs() {
   const c = state.ExtrapolatedClock;
   if (!c?.Remaining) return null;
   let ms = parseHms(c.Remaining);
-  if (c.Extrapolating && c.Utc) ms -= Date.now() - Date.parse(c.Utc);
+  if (c.Extrapolating && c.Utc) ms -= feedNow() - Date.parse(c.Utc);
   return Math.max(0, ms);
 }
 function pjClockTick() {
