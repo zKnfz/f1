@@ -109,6 +109,15 @@ if (BACKEND) {
     }
   }
 }
+if (process.env.PITWALL_ROLE === 'collector') {
+  // Is the data getting to the backend? (The backend alerts too; this works if it is unreachable.)
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, 'shipper-status.json'), 'utf8'));
+    const age = (now - fs.statSync(path.join(DATA, 'shipper-status.json')).mtimeMs) / 1000;
+    if (age > 120) { warnings.push(`shipper not running (status ${Math.round(age)} s old)`); if (systemctl('restart', 'pitwall-shipper.service')) actions.push('restarted shipper'); }
+    else if (s.lastError) warnings.push(`cannot reach the backend: ${s.lastError}; ${(s.backlogBytes / 1e6).toFixed(1)} MB kept here until it can`);
+  } catch { warnings.push('shipper has never run'); }
+}
 // F1 TV sign-in (only where this machine connects to F1 itself)
 if (!BACKEND) try {
   let tok = fs.readFileSync(path.join(DATA, 'f1tv-token.txt'), 'utf8').trim();

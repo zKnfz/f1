@@ -37,7 +37,8 @@ const held = new Map(); // dir -> { files: { name: bytes } }
 function stateOf(dir) {
   if (!held.has(dir)) {
     let s = { files: {} };
-    try { s = JSON.parse(fs.readFileSync(path.join(REC, dir, '.ingest.json'), 'utf8')); } catch {}
+    try { s = JSON.parse(fs.readFileSync(path.join(REC, dir, '.ingest.json'), 'utf8')); }
+    catch { try { s = JSON.parse(fs.readFileSync(path.join(DATA, 'ingest-archive', dir.replace('/', '_') + '.json'), 'utf8')); s.archived = true; } catch {} }
     held.set(dir, s);
   }
   return held.get(dir);

@@ -21,6 +21,9 @@ const REC = path.join(DATA, 'rec');
 const FILES = ['feed.tsv', 'events.jsonl', 'page.jsonl', 'kalshi.jsonl', 'backend-events.jsonl', 'backend-page.jsonl', 'backend-kalshi.jsonl', 'ingest.jsonl'];
 const IDLE_MS = 2 * 3600e3, MIN_FREE = Number(process.env.MIN_FREE_PCT) || 15;
 const REMOTE = process.env.RCLONE_REMOTE || '';
+// A collector never compresses or removes: the shipper reads its files by byte offset, and its
+// copy is the fallback until the backend's copy is backed up. It only reports space.
+const COLLECTOR = process.env.PITWALL_ROLE === 'collector';
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const lines = s => s ? s.split('\n').filter(Boolean).length : 0;
 
@@ -61,6 +64,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (process.argv[2] === '--force') { log('compressed', compactFolder(path.resolve(process.argv[3])), 'lines'); process.exit(0); }
   const status = { at: new Date().toISOString(), compressed: [], backedUp: [], removed: [], errors: [] };
   const active = await current();
+  if (COLLECTOR) {
+    const s = fs.statfsSync(DATA), pct = 100 * s.bavail / s.blocks;
+    fs.writeFileSync(path.join(DATA, 'maintain.json'), JSON.stringify({ ...status, role: 'collector', freePct: +pct.toFixed(1), note: 'collector: nothing compressed or removed' }, null, 1));
+    if (pct < MIN_FREE) log(`LOW SPACE on the collector: ${pct.toFixed(1)}% free; move old data/rec folders off after checking the backend has them`);
+    process.exit(0);
+  }
   const dirs = fs.existsSync(REC) ? fs.readdirSync(REC).map(d => path.join(REC, d)).filter(d => fs.statSync(d).isDirectory()) : [];
   for (const d of dirs) {
     if (d === active || Date.now() - newest(d) < IDLE_MS || compacted(d)) continue;
@@ -81,7 +90,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   status.freePctBefore = +freePct().toFixed(1);
   const removable = dirs.filter(d => fs.existsSync(d) && d !== active && compacted(d) && backedUp(d)).sort((a, b) => newest(a) - newest(b));
   while (freePct() < MIN_FREE && removable.length) {
-    const d = removable.shift(); fs.rmSync(d, { recursive: true, force: true });
+    const d = removable.shift();
+    // Backend: keep how much of each file was received, so a collector that restarts does not
+    // send the whole session again (ingest.mjs reads this when the folder is gone).
+    const held = path.join(d, '.ingest.json');
+    if (fs.existsSync(held)) { fs.mkdirSync(path.join(DATA, 'ingest-archive'), { recursive: true }); fs.copyFileSync(held, path.join(DATA, 'ingest-archive', path.basename(d) + '.json')); }
+    fs.rmSync(d, { recursive: true, force: true });
     status.removed.push(path.basename(d)); log('removed local copy (backed up):', path.basename(d));
   }
   status.freePct = +freePct().toFixed(1);
