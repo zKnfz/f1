@@ -17,7 +17,7 @@ import { chromium } from 'playwright-core';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (k, d) => process.argv.find(a => a.startsWith(`--${k}=`))?.split('=')[1] ?? d;
-const OUT = path.resolve(arg('out', 'data/eval/base')), SPEED = Number(arg('speed', 25)), JOBS = Number(arg('jobs', 4));
+const OUT = path.resolve(arg('out', 'data/eval/base')), SPEED = Number(arg('speed', 25)), JOBS = Number(arg('jobs', 4)), PORT = Number(arg('port', 18900));
 const dirs = process.argv.slice(2).filter(a => !a.startsWith('--')).map(d => path.resolve(d));
 const CAND = process.env.CANDIDATE || '';
 const candJs = CAND ? fs.readFileSync(path.join(ROOT, 'models', 'candidates', `${CAND}.js`), 'utf8') : '';
@@ -60,7 +60,7 @@ await Promise.all(Array.from({ length: Math.min(JOBS, dirs.length) }, async (_, 
   while (next < dirs.length) {
     const d = dirs[next++];
     for (let attempt = 1; attempt <= 2; attempt++) {
-      try { const r = await one(d, 18900 + j); console.log(new Date().toISOString(), path.basename(d), r); break; }
+      try { const r = await one(d, PORT + j); console.log(new Date().toISOString(), path.basename(d), r); break; }
       catch (e) { console.log(new Date().toISOString(), path.basename(d), attempt === 1 ? 'failed, retrying:' : 'FAILED:', e.message.split('\n')[0]); }
     }
   }

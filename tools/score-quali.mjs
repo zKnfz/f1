@@ -34,7 +34,7 @@ export function scoreSession(recs, meta) {
       const t = secs(r.time);
       if (t && t <= best * 1.02) for (const after of [1, 2]) {
         const p = pend.filter(x => x.after === after).at(-1);
-        if (p) out.proj.push({ after, err: p.proj - t, sigma: p.sigma, n, t });
+        if (p) out.proj.push({ after, err: p.proj - t, sigma: p.sigma, n, t, part: Object.entries(o.partStart || {}).filter(([, s]) => r.feedT >= s).map(([k]) => +k).pop() || 1 });
       }
       pend = [];
     }
