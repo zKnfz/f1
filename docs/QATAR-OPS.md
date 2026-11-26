@@ -162,6 +162,15 @@ Gaps (not measurable today; I have not invented numbers for them):
 7. **Mac power and link watchdog**: verify-deploy WARNs (already) and the shipper logs a "Mac slept" note when an outage matches a wake event.
 8. **Enable `pitwall-train.timer`** if the Oracle benchmark passes (§4).
 
+9. **Public site, anonymous visitors** (checked 26 Nov: no prompt on load; direct F1 connection with no token; timing and all predictions work; only GPS positions, telemetry and the slow/stopped alert need F1 TV):
+   - label the button "Optional: live GPS with your F1 TV account", or move it to a settings menu
+   - show a first-visit note: "No sign-in needed: live timing and predictions work as they are"
+   - hide the sign-in button on phones
+   - mark the slow/stopped alert as needing car data
+   - keep visitors connecting to F1 directly (no Oracle or Mac hop)
+
+   To check during FP1: open the site in incognito, don't click the F1 TV button, and confirm live timing updates and predictions appear.
+
 Each one ships only with a before/after measurement on a replay, and outside a race weekend.
 
 ## 8. Long-term architecture
