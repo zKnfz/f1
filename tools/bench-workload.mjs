@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { ALWAYS_ON, SCHEDULED, PROPS, parseShow, unitProblem } from './bench-guard.mjs';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -95,8 +96,10 @@ const memAvailGB = () => {
   try { const v = execFileSync('vm_stat', { encoding: 'utf8' }); const pg = +v.match(/page size of (\d+)/)[1], n = k => +(v.match(new RegExp(`Pages ${k}:\\s+(\\d+)`))?.[1] || 0); return (n('free') + n('inactive') + n('speculative') + n('purgeable')) * pg / 2 ** 30; } catch {}
   return os.freemem() / 2 ** 30;
 };
-const PROD_UNITS = ['pitwall-relay.service', 'pitwall-ingest.service', 'pitwall-session.service'];
-const unitStamp = () => process.platform === 'linux' ? Object.fromEntries(PROD_UNITS.map(u => [u, shx('systemctl', 'show', '-p', 'NRestarts,ExecMainStartTimestampMonotonic,ActiveState', '--value', u)?.replace(/\n/g, ' ')])) : null;
+const unitStamp = () => process.platform === 'linux' ? Object.fromEntries([...ALWAYS_ON, ...SCHEDULED].map(u => {
+  const v = shx('systemctl', 'show', '-p', PROPS.join(','), u); if (v == null) return [u, null];
+  return [u, parseShow(v)];
+})) : null;
 const units0 = unitStamp();
 const ingestOk = async () => { try { return (await fetch('http://127.0.0.1:8770/healthz', { signal: AbortSignal.timeout(3000) })).ok; } catch { return null; } };
 const ingest0 = await ingestOk();
@@ -108,13 +111,14 @@ function guardCheck() {
   if (free < MIN_FREE_GB) return `available memory ${free.toFixed(2)} GB < ${MIN_FREE_GB} GB`;
   const recent = a => a.slice(-30);
   for (const k of ['health', 'stream']) { const r = recent(busy[k]); if (r.length >= 10 && pct(r, 0.95) > P95_MAX) return `relay ${k} p95 ${pct(r, 0.95)} ms > ${P95_MAX} ms`; }
-  const u = unitStamp(); if (u && units0) for (const n of PROD_UNITS) if (u[n] !== units0[n]) return `production unit changed state or restarted: ${n} (${units0[n]} → ${u[n]})`;
+  const u = unitStamp(); if (u && units0) { const why = unitProblem(units0, u); if (why) return `production unit: ${why}`; }
   if (DEADLINE && Date.now() > DEADLINE) return `deadline ${new Date(DEADLINE).toISOString()} reached`;
   return null;
 }
 if (GUARD) {
   console.log(`guard: abort if relay p95 > ${P95_MAX} ms, available memory < ${MIN_FREE_GB} GB, a production unit restarts, ingest stops answering${DEADLINE ? `, or at ${new Date(DEADLINE).toISOString()}` : ''}`);
   if (relayUp && (pct(idle.health, 0.95) > P95_MAX || pct(idle.stream, 0.95) > P95_MAX)) { abortWhy = `relay already slow before starting (health p95 ${pct(idle.health, 0.95)} ms, stream p95 ${pct(idle.stream, 0.95)} ms)`; }
+  if (units0) for (const [n, v] of Object.entries(units0)) if (v?.ActiveState === 'failed' || (v?.Result && v.Result !== 'success')) console.log(`note: ${n} was already ${v.ActiveState} (Result ${v.Result}) before the benchmark`);
   if (memAvailGB() < MIN_FREE_GB + 1) abortWhy ??= `only ${memAvailGB().toFixed(2)} GB available before starting`;
 }
 
