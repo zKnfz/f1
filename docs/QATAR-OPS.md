@@ -39,15 +39,14 @@ from the Mac. Anything learned stays in the Mac's `learned/` folder, unpublished
    `node tools/ship-verify.mjs` (PASS = Oracle holds exactly as many bytes of every file as the Mac).
 3. **Oracle update, freeze, verify** (SSH in):
    ```
-   sudo -u pitwall git -C /opt/pitwall fetch --tags
-   sudo -u pitwall git -C /opt/pitwall merge --ff-only qatar-2026
+   sudo -u pitwall git -C /opt/pitwall pull --ff-only     # main: prediction/relay code identical to tag qatar-2026; adds only tools and docs
    sudo -u pitwall touch /opt/pitwall/data/FREEZE
    sudo sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=0/' /etc/pitwall/pitwall.env; grep -q ^AUTO_UPDATE= /etc/pitwall/pitwall.env || echo AUTO_UPDATE=0 | sudo tee -a /etc/pitwall/pitwall.env
    sudo systemctl restart pitwall-relay pitwall-ingest
    systemctl is-active pitwall-relay pitwall-ingest; systemctl list-timers 'pitwall*'
    sudo -u pitwall bash -c 'set -a; . /etc/pitwall/pitwall.env; cd /opt/pitwall && node tools/verify-deploy.mjs'
    ```
-   Expected: the freeze shows PASS; version lines show `827a3fa`, the same bundle and `race-2026-11-24`;
+   Expected: the freeze shows PASS; version lines show the main commit (production files unchanged since `827a3fa`), the same bundle and `race-2026-11-24`;
    `pitwall-train.timer` is **not** listed (it is installed, never enabled).
    Restarting ingest is safe: the shipper keeps the data and resumes at ingest's offset.
 4. **Backups and storage** (on Oracle):
