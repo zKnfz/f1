@@ -127,6 +127,14 @@ What protects the data, and how far each point is verified:
 | Backup bug fixed in the deployed version | Fixed in the code (self-test scenario 14 covers the 15 GB cap); **deployment unverified** until §3 steps 3–4. |
 | Within Always Free | The cap is 15 GB against a 20 GB allowance; actual use is unverified (§3 step 4). |
 
+**Backup timing (corrected 26 Nov 19:30Z).** Between sessions the relay reconnects every 10 min to look for the next session. Each time, it reopens the last session's folder for ~30 s and writes about 8 event lines and a `relayRuns` entry, which the shipper sends to Oracle.
+- Evidence: Las Vegas `events.jsonl` and `meta.json`, every 10 min since 17:40Z.
+- Effect: the last session folder is never idle for 2 h, so maintenance never compresses or backs it up. It only becomes eligible once the next session starts and the relay moves to a new folder.
+- For Qatar: each session should be backed up about 2.5 h after the *next* session starts. The race folder waits until Abu Dhabi's first session.
+- Nothing is lost meanwhile: the Mac and Oracle both hold full copies.
+- Fix after Qatar: don't reopen a finished session's folder on reconnect, and don't count these events as activity. Not before: it is frozen relay/recorder code.
+- Do not force compression by hand while the folder is still being reopened: compression can race with ingest appends.
+
 ## 6. FP1 validation checklist (27 Nov, 13:30 UTC)
 
 The **page** rows read from the page's latency panel (click DELAY):
