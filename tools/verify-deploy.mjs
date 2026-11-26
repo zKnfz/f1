@@ -122,6 +122,21 @@ try {
   for (const d of m.notBackedUp || []) if (!d.startsWith('_')) say('WARN', 'not backed up yet', d);
 } catch { if (ROLE !== 'collector') say('WARN', 'maintenance', 'has not run yet (data/maintain.json missing)'); }
 
+// ---- freeze and versions in use ----
+{
+  const fz = path.join(DATA, 'FREEZE');
+  if (fs.existsSync(fz)) {
+    say('PASS', 'freeze', fs.readFileSync(fz, 'utf8').split('\n')[0]);
+    if (ROLE !== 'collector' && env.AUTO_UPDATE !== '0') say('INFO', 'AUTO_UPDATE', `${env.AUTO_UPDATE ?? '1 (default)'}: no effect while frozen (session script skips the pull); set AUTO_UPDATE=0 as well to be safe`);
+    if (env.SHARE_LEARNED === '1') say('INFO', 'SHARE_LEARNED=1', 'no effect while frozen (nothing is published)');
+  } else say('INFO', 'freeze', `off (no ${path.relative(ROOT, fz) || fz}): code updates and model publishing follow AUTO_UPDATE / SHARE_LEARNED`);
+  const port = env.PORT || 8765;
+  try {
+    const out = execFileSync(process.execPath, [path.join(ROOT, 'tools/versions.mjs'), `--relay=http://127.0.0.1:${port}`, '--public'], { encoding: 'utf8', timeout: 90000, env: { ...process.env, PITWALL_DATA: DATA } });
+    for (const l of out.split('\n')) { const m = l.match(/^(PASS|WARN|FAIL|INFO)\s+(.{24})\s(.*)$/); if (m) say(m[1], 'version: ' + m[2].trim(), m[3]); }
+  } catch (e) { for (const l of String(e.stdout || '').split('\n')) { const m = l.match(/^(PASS|WARN|FAIL|INFO)\s+(.{24})\s(.*)$/); if (m) say(m[1], 'version: ' + m[2].trim(), m[3]); } if (!e.stdout) say('WARN', 'versions', 'could not run tools/versions.mjs: ' + e.message.slice(0, 80)); }
+}
+
 const w = Math.max(...res.map(r => r[1].length));
 for (const [l, what, d] of res) console.log(`${l.padEnd(4)}  ${what.padEnd(w)}  ${d}`);
 const fails = res.filter(r => r[0] === 'FAIL').length;

@@ -67,6 +67,8 @@ grep -q '"note": "session over"' data/last-run.json 2>/dev/null && echo "$name" 
 # Check the raw recording: gaps, drops, missed updates, missing laps (into the log).
 node tools/recording-report.mjs >> data/recorder.log 2>&1 || echo "$(date) recording report failed" >> data/recorder.log
 
+# Freeze (data/FREEZE exists, e.g. for a race weekend): what was learned stays here, unpublished.
+if [ -f data/FREEZE ]; then echo "$(date) Frozen ($(head -1 data/FREEZE)): learned/ kept local, not shared."; exit 0; fi
 # Nothing reaches the public site unless it passes the checks (kept here, not shared, if not).
 if ! node tools/validate-learned.mjs >> data/recorder.log 2>&1; then echo "$(date) learned/ failed validation: NOT shared (see data/recorder.log)"; exit 0; fi
 git add learned

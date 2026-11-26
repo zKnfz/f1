@@ -21,7 +21,10 @@ name="$(echo "$check" | sed -E 's/.*"name":"([^"]*)".*/\1/') $(date -u +%Y)"
 grep -qxF "$name" "$PITWALL_DATA/recorded.txt" 2>/dev/null && exit 0
 echo "$(date -u +%FT%TZ) session: $name (wait ${wait} min, at most ${max} min)"
 
-if [ "${AUTO_UPDATE:-1}" = "1" ]; then
+# Freeze (data/FREEZE exists, e.g. for a race weekend): no code updates and nothing published.
+# Recording, live predictions and the page's own in-session learning carry on unchanged.
+frozen=""; [ -f "$PITWALL_DATA/FREEZE" ] && frozen=1 && echo "frozen ($(head -1 "$PITWALL_DATA/FREEZE")): no code update, no publishing"
+if [ -z "$frozen" ] && [ "${AUTO_UPDATE:-1}" = "1" ]; then
   before=$(git rev-parse HEAD)
   if git pull -q --ff-only 2>&1; then
     after=$(git rev-parse HEAD)
@@ -38,7 +41,7 @@ node tools/record.mjs --wait="$wait" --max="$max"
 grep -q '"note": "session over"' "$PITWALL_DATA/last-run.json" 2>/dev/null && echo "$name" >> "$PITWALL_DATA/recorded.txt"
 node tools/recording-report.mjs || true
 
-if [ "${SHARE_LEARNED:-0}" = "1" ]; then
+if [ -z "$frozen" ] && [ "${SHARE_LEARNED:-0}" = "1" ]; then
   # Nothing reaches the public site unless it passes the checks (kept here, not shared, if not).
   if ! node tools/validate-learned.mjs; then echo "learned/ failed validation: NOT shared"; exit 0; fi
   git add learned
