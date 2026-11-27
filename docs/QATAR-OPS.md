@@ -179,6 +179,16 @@ Gaps (not measurable today; I have not invented numbers for them):
 
    To check during FP1: open the site in incognito, don't click the F1 TV button, and confirm live timing updates and predictions appear.
 
+10. **Added 27 Nov (after FP1/FP2):**
+    - fix the weather display in the Track card
+    - persist receipt → processing and receipt → screen latency (P50/P95/P99 per minute) in page.jsonl
+    - add a lap identifier (driver lap number) to `proj` records
+    - fix `ship-verify`: compare `meta.json` by hash rather than by ingest's append offsets, and skip empty files
+    - fix the backup lifecycle: don't reopen a finished session folder on reconnect, so it can go idle and be backed up
+    - stop `meta.json` growing with `relayRuns` entries between sessions
+    - make the recording report count real relay starts separately from folder reopens
+11. **Lid-close sleep:** FP2 showed the Mac sleeps when the lid is closed even on mains with `sleep 0` (18:24:55Z, 'Clamshell Sleep'). Add a verify-deploy check and an operator note.
+
 Each one ships only with a before/after measurement on a replay, and outside a race weekend.
 
 ## 8. Long-term architecture
